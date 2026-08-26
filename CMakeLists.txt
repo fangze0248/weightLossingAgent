@@ -67,3 +67,6 @@ install(TARGETS weightLossingAgent
 if(QT_VERSION_MAJOR EQUAL 6)
     qt_finalize_executable(weightLossingAgent)
 endif()
+target_include_directories(weightLossingAgent PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
