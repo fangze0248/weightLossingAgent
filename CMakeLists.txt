@@ -9,8 +9,25 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core Widgets)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Widgets)
+
+add_library(recommendation_core STATIC
+    src/recommendation/recommendationcore.h
+    src/recommendation/recommendationcore.cpp
+)
+
+target_include_directories(recommendation_core PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+
+target_link_libraries(recommendation_core PUBLIC
+    Qt${QT_VERSION_MAJOR}::Core
+)
+
+target_compile_features(recommendation_core PUBLIC
+    cxx_std_17
+)
 
 set(PROJECT_SOURCES
         main.cpp
@@ -41,7 +58,14 @@ else()
     endif()
 endif()
 
-target_link_libraries(weightLossingAgent PRIVATE Qt${QT_VERSION_MAJOR}::Widgets)
+target_include_directories(weightLossingAgent PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+
+target_link_libraries(weightLossingAgent PRIVATE
+    Qt${QT_VERSION_MAJOR}::Widgets
+    recommendation_core
+)
 
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
 # If you are developing for iOS or macOS you should consider setting an
@@ -67,3 +91,19 @@ install(TARGETS weightLossingAgent
 if(QT_VERSION_MAJOR EQUAL 6)
     qt_finalize_executable(weightLossingAgent)
 endif()
+
+enable_testing()
+
+add_executable(contracts_compile_test
+    tests/contracts_compile_test.cpp
+)
+
+target_link_libraries(contracts_compile_test PRIVATE
+    recommendation_core
+    Qt${QT_VERSION_MAJOR}::Core
+)
+
+add_test(
+    NAME contracts_compile_test
+    COMMAND contracts_compile_test
+)
