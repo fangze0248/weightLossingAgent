@@ -22,6 +22,7 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
     qt_add_executable(weightLossingAgent
         MANUAL_FINALIZATION
         ${PROJECT_SOURCES}
+        src/recommendation/recommendationcore.h src/recommendation/recommendationcore.cpp
     )
 # Define target properties for Android with Qt 6 as:
 #    set_property(TARGET weightLossingAgent APPEND PROPERTY QT_ANDROID_PACKAGE_SOURCE_DIR
@@ -69,4 +70,20 @@ if(QT_VERSION_MAJOR EQUAL 6)
 endif()
 target_include_directories(weightLossingAgent PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+add_library(recommendation_core STATIC
+    src/recommendation/recommendationcore.h
+    src/recommendation/recommendationcore.cpp
+)
+
+target_include_directories(recommendation_core PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+
+target_link_libraries(recommendation_core PUBLIC
+    Qt${QT_VERSION_MAJOR}::Core
+)
+
+target_compile_features(recommendation_core PUBLIC
+    cxx_std_17
 )
