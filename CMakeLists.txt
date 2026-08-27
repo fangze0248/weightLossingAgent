@@ -200,3 +200,28 @@ else()
         COMMAND $<TARGET_FILE:sqlite_repository_test>
     )
 endif()
+
+add_executable(recommendation_persistence_integration_test
+    tests/recommendation_persistence_integration_test.cpp
+)
+
+target_link_libraries(recommendation_persistence_integration_test PRIVATE
+    persistence_core
+    recommendation_core
+    Qt${QT_VERSION_MAJOR}::Core
+    Qt${QT_VERSION_MAJOR}::Sql
+)
+
+if(WIN32)
+    add_test(
+        NAME recommendation_persistence_integration_test
+        COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt${QT_VERSION_MAJOR}::Core>;$ENV{PATH}"
+            $<TARGET_FILE:recommendation_persistence_integration_test>
+    )
+else()
+    add_test(
+        NAME recommendation_persistence_integration_test
+        COMMAND $<TARGET_FILE:recommendation_persistence_integration_test>
+    )
+endif()
