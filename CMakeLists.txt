@@ -187,7 +187,16 @@ target_link_libraries(sqlite_repository_test PRIVATE
     Qt${QT_VERSION_MAJOR}::Sql
 )
 
-add_test(
-    NAME sqlite_repository_test
-    COMMAND sqlite_repository_test
-)
+if(WIN32)
+    add_test(
+        NAME sqlite_repository_test
+        COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt${QT_VERSION_MAJOR}::Core>;$ENV{PATH}"
+            $<TARGET_FILE:sqlite_repository_test>
+    )
+else()
+    add_test(
+        NAME sqlite_repository_test
+        COMMAND $<TARGET_FILE:sqlite_repository_test>
+    )
+endif()
