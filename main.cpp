@@ -6,6 +6,7 @@
 #include "repositories/sqliteuserrepository.h"
 #include "recommendation/healthcalculator.h"
 #include "session/sessionmanager.h"
+#include "ui/appstyle.h"
 
 #include <QApplication>
 #include <QMessageBox>
@@ -15,6 +16,8 @@
 int main(int argc, char *argv[])
 {
     QApplication a(argc, argv);
+    QApplication::setStyle(QStringLiteral("Fusion"));
+    a.setStyleSheet(applicationStyleSheet());
     QCoreApplication::setOrganizationName(QStringLiteral("SummerSchool"));
     QCoreApplication::setApplicationName(QStringLiteral("WeightLossingAgent"));
 

@@ -4,6 +4,7 @@
 #include "session/sessionmanager.h"
 
 #include <QAbstractItemView>
+#include <QFrame>
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -45,24 +46,35 @@ PlanPage::PlanPage(IPlanRepository& repository,
       repository_(repository),
       sessionManager_(sessionManager)
 {
+    setProperty("page", true);
+
     auto* titleLabel = new QLabel(QStringLiteral("周计划结果"), this);
-    titleLabel->setAlignment(Qt::AlignCenter);
+    titleLabel->setProperty("role", "pageTitle");
+    auto* subtitleLabel = new QLabel(
+        QStringLiteral("查看当前账号已保存的最新运动与饮食周计划。"), this);
+    subtitleLabel->setProperty("role", "subtitle");
 
     currentUserLabel_ = new QLabel(this);
+    currentUserLabel_->setProperty("role", "currentUser");
     currentUserLabel_->setText(
         sessionManager_.hasCurrentUser()
             ? QStringLiteral("当前账号：%1")
                   .arg(sessionManager_.currentUserId())
             : QStringLiteral("当前未登录"));
     loadButton_ = new QPushButton(QStringLiteral("加载最新计划"), this);
+    loadButton_->setProperty("variant", "primary");
 
-    auto* searchLayout = new QHBoxLayout;
+    auto* searchCard = new QFrame(this);
+    searchCard->setProperty("card", true);
+    auto* searchLayout = new QHBoxLayout(searchCard);
+    searchLayout->setContentsMargins(18, 12, 18, 12);
     searchLayout->addWidget(currentUserLabel_);
     searchLayout->addStretch();
     searchLayout->addWidget(loadButton_);
 
     summaryLabel_ = new QLabel(QStringLiteral("尚未加载周计划"), this);
     summaryLabel_->setWordWrap(true);
+    summaryLabel_->setProperty("role", "resultCard");
 
     planTable_ = new QTableWidget(0, 8, this);
     planTable_->setHorizontalHeaderLabels({
@@ -78,10 +90,15 @@ PlanPage::PlanPage(IPlanRepository& repository,
     planTable_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     planTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     planTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    planTable_->setAlternatingRowColors(true);
+    planTable_->verticalHeader()->setVisible(false);
 
     auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(22, 14, 22, 18);
+    layout->setSpacing(11);
     layout->addWidget(titleLabel);
-    layout->addLayout(searchLayout);
+    layout->addWidget(subtitleLabel);
+    layout->addWidget(searchCard);
     layout->addWidget(summaryLabel_);
     layout->addWidget(planTable_);
 
@@ -101,7 +118,7 @@ void PlanPage::loadLatestPlan()
     if (userId.isEmpty()) {
         QMessageBox::warning(this,
                              QStringLiteral("未登录"),
-                             QStringLiteral("请先在健康计算页登录或切换账号"));
+                             QStringLiteral("请先在登录页登录账号"));
         return;
     }
 

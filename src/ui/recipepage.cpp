@@ -5,6 +5,7 @@
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
+#include <QFrame>
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -63,8 +64,13 @@ QStringList splitListText(const QString& text)
 RecipePage::RecipePage(IRecipeRepository& repository, QWidget* parent)
     : QWidget(parent), repository_(repository)
 {
+    setProperty("page", true);
+
     auto* titleLabel = new QLabel(QStringLiteral("食谱数据管理"), this);
-    titleLabel->setAlignment(Qt::AlignCenter);
+    titleLabel->setProperty("role", "pageTitle");
+    auto* subtitleLabel = new QLabel(
+        QStringLiteral("管理早、中、晚餐与营养标签，为食谱推荐提供候选数据。"), this);
+    subtitleLabel->setProperty("role", "subtitle");
 
     idEdit_ = new QLineEdit(this);
     idEdit_->setPlaceholderText(QStringLiteral("例如：R004"));
@@ -95,7 +101,9 @@ RecipePage::RecipePage(IRecipeRepository& repository, QWidget* parent)
         QStringLiteral("多个标签用逗号分隔，例如：高蛋白，低脂"));
 
     addButton_ = new QPushButton(QStringLiteral("新增食谱"), this);
+    addButton_->setProperty("variant", "primary");
     deleteButton_ = new QPushButton(QStringLiteral("删除选中食谱"), this);
+    deleteButton_->setProperty("variant", "danger");
     refreshButton_ = new QPushButton(QStringLiteral("刷新食谱"), this);
     recipeTable_ = new QTableWidget(0, 6, this);
     recipeTable_->setHorizontalHeaderLabels({
@@ -109,8 +117,15 @@ RecipePage::RecipePage(IRecipeRepository& repository, QWidget* parent)
     recipeTable_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     recipeTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     recipeTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    recipeTable_->setAlternatingRowColors(true);
+    recipeTable_->verticalHeader()->setVisible(false);
 
-    auto* formLayout = new QFormLayout;
+    auto* formCard = new QFrame(this);
+    formCard->setProperty("card", true);
+    auto* formLayout = new QFormLayout(formCard);
+    formLayout->setContentsMargins(22, 17, 22, 17);
+    formLayout->setHorizontalSpacing(18);
+    formLayout->setVerticalSpacing(10);
     formLayout->addRow(QStringLiteral("食谱编号："), idEdit_);
     formLayout->addRow(QStringLiteral("食谱名称："), nameEdit_);
     formLayout->addRow(QStringLiteral("餐别："), mealTypeCombo_);
@@ -124,8 +139,11 @@ RecipePage::RecipePage(IRecipeRepository& repository, QWidget* parent)
     buttonLayout->addWidget(refreshButton_);
 
     auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(22, 14, 22, 18);
+    layout->setSpacing(11);
     layout->addWidget(titleLabel);
-    layout->addLayout(formLayout);
+    layout->addWidget(subtitleLabel);
+    layout->addWidget(formCard);
     layout->addLayout(buttonLayout);
     layout->addWidget(recipeTable_);
 

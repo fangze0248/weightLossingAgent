@@ -7,6 +7,8 @@
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
+#include <QFrame>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
@@ -23,12 +25,16 @@ HealthPage::HealthPage(IHealthCalculator& calculator,
       userRepository_(userRepository),
       sessionManager_(sessionManager)
 {
+    setProperty("page", true);
+
     auto* titleLabel = new QLabel(
         QStringLiteral("用户健康数据与热量估算"), this);
     titleLabel->setAlignment(Qt::AlignCenter);
+    titleLabel->setProperty("role", "pageTitle");
 
     currentUserLabel_ = new QLabel(this);
     currentUserLabel_->setAlignment(Qt::AlignCenter);
+    currentUserLabel_->setProperty("role", "currentUser");
     updateCurrentUserLabel(sessionManager_.currentUserId());
 
     idEdit_ = new QLineEdit(QStringLiteral("U001"), this);
@@ -84,17 +90,25 @@ HealthPage::HealthPage(IHealthCalculator& calculator,
 
     calculateButton_ = new QPushButton(
         QStringLiteral("计算健康指标"), this);
+    calculateButton_->setProperty("variant", "primary");
     loginButton_ = new QPushButton(
         QStringLiteral("登录 / 切换到此账号"), this);
     saveButton_ = new QPushButton(
         QStringLiteral("保存用户资料"), this);
+    saveButton_->setProperty("variant", "warning");
 
     resultLabel_ = new QLabel(
         QStringLiteral("请填写数据后点击计算"), this);
     resultLabel_->setWordWrap(true);
     resultLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    resultLabel_->setProperty("role", "resultCard");
 
-    auto* formLayout = new QFormLayout;
+    auto* formCard = new QFrame(this);
+    formCard->setProperty("card", true);
+    auto* formLayout = new QFormLayout(formCard);
+    formLayout->setContentsMargins(22, 18, 22, 18);
+    formLayout->setHorizontalSpacing(18);
+    formLayout->setVerticalSpacing(10);
     formLayout->addRow(QStringLiteral("用户编号："), idEdit_);
     formLayout->addRow(QStringLiteral("用户名称："), nameEdit_);
     formLayout->addRow(QStringLiteral("性别："), genderCombo_);
@@ -106,13 +120,19 @@ HealthPage::HealthPage(IHealthCalculator& calculator,
     formLayout->addRow(QStringLiteral("每周减重目标："), weeklyGoalSpin_);
     formLayout->addRow(QStringLiteral("饮食贡献比例："), dietRatioSpin_);
 
+    auto* actionLayout = new QHBoxLayout;
+    actionLayout->setSpacing(10);
+    actionLayout->addWidget(loginButton_);
+    actionLayout->addWidget(calculateButton_);
+    actionLayout->addWidget(saveButton_);
+
     auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(22, 14, 22, 18);
+    layout->setSpacing(11);
     layout->addWidget(titleLabel);
     layout->addWidget(currentUserLabel_);
-    layout->addLayout(formLayout);
-    layout->addWidget(loginButton_);
-    layout->addWidget(calculateButton_);
-    layout->addWidget(saveButton_);
+    layout->addWidget(formCard);
+    layout->addLayout(actionLayout);
     layout->addWidget(resultLabel_);
     layout->addStretch();
 

@@ -3,6 +3,7 @@
 
 #include <QAbstractItemView>
 #include <QFormLayout>
+#include <QFrame>
 #include <QLabel>
 #include <QHBoxLayout>
 #include <QMessageBox>
@@ -15,18 +16,19 @@
 ExercisePage::ExercisePage(QWidget* parent)
     : QWidget(parent)
 {
-    auto* messageLabel = new QLabel(
-        QStringLiteral("这是我修改的第一个QT页面"), this);
-    messageLabel->setAlignment(Qt::AlignCenter);
-    auto* changeButton =new QPushButton(QStringLiteral("点击我"),this);
+    setProperty("page", true);
+
+    auto* titleLabel = new QLabel(QStringLiteral("运动库管理"), this);
+    titleLabel->setProperty("role", "pageTitle");
+    auto* subtitleLabel = new QLabel(
+        QStringLiteral("维护可用运动及 MET 强度，为运动处方提供基础数据。"), this);
+    subtitleLabel->setProperty("role", "subtitle");
+
     auto* layout = new QVBoxLayout(this);
-    layout->addWidget(changeButton);
-    layout->addWidget(messageLabel);
-    connect(changeButton,
-            &QPushButton::clicked,
-            this,
-            [messageLabel]()
-            {messageLabel->setText(QStringLiteral("点击成功！"));});
+    layout->setContentsMargins(22, 14, 22, 18);
+    layout->setSpacing(11);
+    layout->addWidget(titleLabel);
+    layout->addWidget(subtitleLabel);
 
     exerciseTable_ = new QTableWidget(0, 3, this);
     exerciseTable_->setHorizontalHeaderLabels({
@@ -36,13 +38,17 @@ ExercisePage::ExercisePage(QWidget* parent)
         );
 
     exerciseTable_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    exerciseTable_->setAlternatingRowColors(true);
+    exerciseTable_->verticalHeader()->setVisible(false);
     idEdit_ = new QLineEdit(this);
     nameEdit_ = new QLineEdit(this);
     metEdit_ = new QLineEdit(this);
     addButton_ = new QPushButton(
         QStringLiteral("新增运动"), this);
+    addButton_->setProperty("variant", "primary");
     deleteButton_ = new QPushButton(
         QStringLiteral("删除选中运动"), this);
+    deleteButton_->setProperty("variant", "danger");
 
     idEdit_->setPlaceholderText(
         QStringLiteral("例如：EX004"));
@@ -53,7 +59,12 @@ ExercisePage::ExercisePage(QWidget* parent)
     metEdit_->setPlaceholderText(
         QStringLiteral("例如：6.0"));
 
-    auto* formLayout = new QFormLayout;
+    auto* formCard = new QFrame(this);
+    formCard->setProperty("card", true);
+    auto* formLayout = new QFormLayout(formCard);
+    formLayout->setContentsMargins(22, 17, 22, 17);
+    formLayout->setHorizontalSpacing(18);
+    formLayout->setVerticalSpacing(10);
     formLayout->addRow(
         QStringLiteral("运动编号："), idEdit_);
     formLayout->addRow(
@@ -65,7 +76,7 @@ ExercisePage::ExercisePage(QWidget* parent)
     buttonLayout->addWidget(deleteButton_);
     formLayout->addRow(buttonLayout);
 
-    layout->addLayout(formLayout);
+    layout->addWidget(formCard);
     layout->addWidget(exerciseTable_);
     exerciseTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     exerciseTable_->setSelectionBehavior(QAbstractItemView::SelectRows);

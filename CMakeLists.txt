@@ -66,12 +66,20 @@ set(PROJECT_SOURCES
         mainwindow.h
         src/session/sessionmanager.cpp
         src/session/sessionmanager.h
+        src/ui/appstyle.cpp
+        src/ui/appstyle.h
+        src/ui/dashboardpage.cpp
+        src/ui/dashboardpage.h
         src/ui/exercisepage.cpp
         src/ui/exercisepage.h
         src/ui/healthpage.cpp
         src/ui/healthpage.h
+        src/ui/loginpage.cpp
+        src/ui/loginpage.h
         src/ui/planpage.cpp
         src/ui/planpage.h
+        src/ui/profiledialog.cpp
+        src/ui/profiledialog.h
         src/ui/recipepage.cpp
         src/ui/recipepage.h
 )
