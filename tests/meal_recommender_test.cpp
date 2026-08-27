@@ -427,5 +427,46 @@ int main()
         return 32;
     }
 
+    // 单份食谱方案只有 700 千卡，会进入多食谱搜索。存在多套落在全天
+    // 容差内的组合时，应选出精确符合 30%/40%/30% 的 300/400/300。
+    Recipe ratioBreakfastFar = breakfast;
+    ratioBreakfastFar.id = QStringLiteral("ratio-breakfast-far");
+    ratioBreakfastFar.totalCalories = 100.0;
+    Recipe ratioBreakfastExact = breakfast;
+    ratioBreakfastExact.id = QStringLiteral("ratio-breakfast-exact");
+    ratioBreakfastExact.totalCalories = 200.0;
+    Recipe ratioLunchFar = lunch;
+    ratioLunchFar.id = QStringLiteral("ratio-lunch-far");
+    ratioLunchFar.totalCalories = 100.0;
+    Recipe ratioLunchExact = lunch;
+    ratioLunchExact.id = QStringLiteral("ratio-lunch-exact");
+    ratioLunchExact.totalCalories = 300.0;
+    Recipe ratioDinnerFar = dinner;
+    ratioDinnerFar.id = QStringLiteral("ratio-dinner-far");
+    ratioDinnerFar.totalCalories = 100.0;
+    Recipe ratioDinnerExact = dinner;
+    ratioDinnerExact.id = QStringLiteral("ratio-dinner-exact");
+    ratioDinnerExact.totalCalories = 200.0;
+
+    const auto ratioPriorityResult = recommender.generate(
+        user,
+        1000.0,
+        {ratioBreakfastFar,
+         ratioBreakfastExact,
+         ratioLunchFar,
+         ratioLunchExact,
+         ratioDinnerFar,
+         ratioDinnerExact},
+        options);
+
+    if (!ratioPriorityResult.ok
+        || ratioPriorityResult.data.breakfast.size() != 2
+        || ratioPriorityResult.data.lunch.size() != 2
+        || ratioPriorityResult.data.dinner.size() != 2
+        || std::abs(ratioPriorityResult.data.totalCalories - 1000.0)
+            > 1e-9) {
+        return 33;
+    }
+
     return 0;
 }

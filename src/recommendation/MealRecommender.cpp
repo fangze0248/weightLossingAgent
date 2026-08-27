@@ -229,6 +229,37 @@ int mealPlanItemCount(const MealPlan& plan)
         + plan.snacks.size();
 }
 
+double mealRatioDifference(
+    const QVector<MealChoice>& choices,
+    double targetCalories,
+    const MealRecommendationOptions& options)
+{
+    double totalDifference = 0.0;
+
+    for (const MealChoice& choice : choices) {
+        double ratio = 0.0;
+        switch (choice.mealType) {
+        case MealType::Breakfast:
+            ratio = options.breakfastRatio;
+            break;
+        case MealType::Lunch:
+            ratio = options.lunchRatio;
+            break;
+        case MealType::Dinner:
+            ratio = options.dinnerRatio;
+            break;
+        case MealType::Snack:
+            ratio = options.snackRatio;
+            break;
+        }
+
+        totalDifference += std::abs(
+            choice.calories - targetCalories * ratio);
+    }
+
+    return totalDifference;
+}
+
 void appendChoiceToPlan(MealPlan& plan, const MealChoice& choice)
 {
     switch (choice.mealType) {
@@ -289,7 +320,8 @@ std::optional<MealPlan> findBestMultiRecipePlan(
     const double maximumCalories =
         targetCalories * (1.0 + options.toleranceRatio);
     std::optional<MealPlan> bestPlan;
-    double bestDifference = 0.0;
+    double bestRatioDifference = 0.0;
+    double bestDailyDifference = 0.0;
     QVector<MealChoice> currentChoices;
 
     std::function<void(qsizetype, double)> search =
@@ -309,19 +341,30 @@ std::optional<MealPlan> findBestMultiRecipePlan(
                     appendChoiceToPlan(candidate, choice);
                 }
 
-                const double difference =
+                const double ratioDifference = mealRatioDifference(
+                    currentChoices,
+                    targetCalories,
+                    options);
+                const double dailyDifference =
                     std::abs(candidate.totalCalories - targetCalories);
                 const bool isBetter =
                     !bestPlan.has_value()
-                    || difference < bestDifference - kComparisonEpsilon
-                    || (std::abs(difference - bestDifference)
+                    || ratioDifference
+                        < bestRatioDifference - kComparisonEpsilon
+                    || (std::abs(ratioDifference - bestRatioDifference)
                             <= kComparisonEpsilon
-                        && mealPlanItemCount(candidate)
-                            < mealPlanItemCount(*bestPlan));
+                        && (dailyDifference
+                                < bestDailyDifference - kComparisonEpsilon
+                            || (std::abs(
+                                    dailyDifference - bestDailyDifference)
+                                    <= kComparisonEpsilon
+                                && mealPlanItemCount(candidate)
+                                    < mealPlanItemCount(*bestPlan))));
 
                 if (isBetter) {
                     bestPlan = std::move(candidate);
-                    bestDifference = difference;
+                    bestRatioDifference = ratioDifference;
+                    bestDailyDifference = dailyDifference;
                 }
                 return;
             }
