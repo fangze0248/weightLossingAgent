@@ -9,8 +9,37 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core Widgets)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Widgets)
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core Widgets Sql)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Widgets Sql)
+
+add_library(persistence_core STATIC
+    database/databasemanager.h
+    database/databasemanager.cpp
+    database/modeljsoncodec.h
+    database/modeljsoncodec.cpp
+    src/repositories/sqliteuserrepository.h
+    src/repositories/sqliteuserrepository.cpp
+    src/repositories/sqliteexerciseRepository.h
+    src/repositories/sqliteexerciseRepository.cpp
+    src/repositories/sqlitereciperepository.h
+    src/repositories/sqlitereciperepository.cpp
+    src/repositories/sqliteplanrepository.h
+    src/repositories/sqliteplanrepository.cpp
+    src/repositories/sqlitefeedbackrepository.h
+    src/repositories/sqlitefeedbackrepository.cpp
+)
+
+target_include_directories(persistence_core PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+
+target_link_libraries(persistence_core PUBLIC
+    Qt${QT_VERSION_MAJOR}::Core
+    Qt${QT_VERSION_MAJOR}::Sql
+)
+
+target_compile_features(persistence_core PUBLIC cxx_std_17)
 
 add_library(recommendation_core STATIC
     src/recommendation/recommendationcore.h
@@ -71,6 +100,8 @@ target_include_directories(weightLossingAgent PRIVATE
 
 target_link_libraries(weightLossingAgent PRIVATE
     Qt${QT_VERSION_MAJOR}::Widgets
+    Qt${QT_VERSION_MAJOR}::Sql
+    persistence_core
     recommendation_core
 )
 
@@ -144,4 +175,19 @@ add_recommendation_test(
 add_recommendation_test(
     weekly_planner_test
     tests/weekly_planner_test.cpp
+)
+
+add_executable(sqlite_repository_test
+    tests/sqlite_repository_test.cpp
+)
+
+target_link_libraries(sqlite_repository_test PRIVATE
+    persistence_core
+    Qt${QT_VERSION_MAJOR}::Core
+    Qt${QT_VERSION_MAJOR}::Sql
+)
+
+add_test(
+    NAME sqlite_repository_test
+    COMMAND sqlite_repository_test
 )
