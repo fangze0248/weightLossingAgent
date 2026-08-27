@@ -15,6 +15,13 @@ find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Widgets)
 add_library(recommendation_core STATIC
     src/recommendation/recommendationcore.h
     src/recommendation/recommendationcore.cpp
+    src/recommendation/ExerciseRecommender.h
+    src/recommendation/ExerciseRecommender.cpp
+    src/recommendation/MealRecommender.h
+    src/recommendation/MealRecommender.cpp
+    src/recommendation/WeeklyPlanner.h
+    src/recommendation/WeeklyPlanner.cpp
+
 )
 
 target_include_directories(recommendation_core PUBLIC
@@ -94,16 +101,47 @@ endif()
 
 enable_testing()
 
-add_executable(contracts_compile_test
+function(add_recommendation_test target_name source_file)
+    add_executable(${target_name}
+        ${source_file}
+    )
+
+    target_link_libraries(${target_name} PRIVATE
+        recommendation_core
+        Qt${QT_VERSION_MAJOR}::Core
+    )
+
+    if(WIN32)
+        add_test(
+            NAME ${target_name}
+            COMMAND ${CMAKE_COMMAND} -E env
+                "PATH=$<TARGET_FILE_DIR:Qt${QT_VERSION_MAJOR}::Core>;$ENV{PATH}"
+                $<TARGET_FILE:${target_name}>
+        )
+    else()
+        add_test(
+            NAME ${target_name}
+            COMMAND $<TARGET_FILE:${target_name}>
+        )
+    endif()
+endfunction()
+
+add_recommendation_test(
+    contracts_compile_test
     tests/contracts_compile_test.cpp
 )
 
-target_link_libraries(contracts_compile_test PRIVATE
-    recommendation_core
-    Qt${QT_VERSION_MAJOR}::Core
+add_recommendation_test(
+    exercise_recommender_test
+    tests/exercise_recommender_test.cpp
 )
 
-add_test(
-    NAME contracts_compile_test
-    COMMAND contracts_compile_test
+add_recommendation_test(
+    meal_recommender_test
+    tests/meal_recommender_test.cpp
+)
+
+add_recommendation_test(
+    weekly_planner_test
+    tests/weekly_planner_test.cpp
 )

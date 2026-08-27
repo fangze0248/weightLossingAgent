@@ -1,0 +1,4 @@
+#ifndef WEEKLYPLANNER_H
+#define WEEKLYPLANNER_H
+
+#endif // WEEKLYPLANNER_H
