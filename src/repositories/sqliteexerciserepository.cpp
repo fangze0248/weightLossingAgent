@@ -1,4 +1,4 @@
-#include "sqliteexerciseRepository.h"
+#include "sqliteexerciserepository.h"
 
 #include <QSqlError>
 #include <QSqlQuery>
