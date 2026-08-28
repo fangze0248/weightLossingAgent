@@ -1,0 +1,4 @@
+id,name,total_calories,meal_type,ingredients,nutrition_tags
+R101,燕麦鸡蛋早餐,420,breakfast,燕麦:50:g|鸡蛋:1:个,高蛋白|均衡
+R102,鸡胸肉米饭,620,lunch,鸡胸肉:150:g|米饭:150:g,高蛋白|低脂
+R103,清蒸鱼蔬菜,520,dinner,鱼肉:180:g|蔬菜:250:g,高蛋白|低脂

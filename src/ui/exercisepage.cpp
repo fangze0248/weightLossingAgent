@@ -1,8 +1,10 @@
 #include "ui/exercisepage.h"
+#include "interfaces/IDataExchangeService.h"
 #include "interfaces/IExerciseRepository.h"
 
 #include <QAbstractItemView>
 #include <QFormLayout>
+#include <QFileDialog>
 #include <QFrame>
 #include <QLabel>
 #include <QHBoxLayout>
@@ -13,8 +15,9 @@
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QLineEdit>
-ExercisePage::ExercisePage(QWidget* parent)
-    : QWidget(parent)
+ExercisePage::ExercisePage(IDataExchangeService& dataExchangeService,
+                           QWidget* parent)
+    : QWidget(parent), dataExchangeService_(dataExchangeService)
 {
     setProperty("page", true);
 
@@ -49,6 +52,7 @@ ExercisePage::ExercisePage(QWidget* parent)
     deleteButton_ = new QPushButton(
         QStringLiteral("删除选中运动"), this);
     deleteButton_->setProperty("variant", "danger");
+    importButton_ = new QPushButton(QStringLiteral("从 CSV 导入"), this);
 
     idEdit_->setPlaceholderText(
         QStringLiteral("例如：EX004"));
@@ -74,6 +78,7 @@ ExercisePage::ExercisePage(QWidget* parent)
     auto* buttonLayout = new QHBoxLayout;
     buttonLayout->addWidget(addButton_);
     buttonLayout->addWidget(deleteButton_);
+    buttonLayout->addWidget(importButton_);
     formLayout->addRow(buttonLayout);
 
     layout->addWidget(formCard);
@@ -88,6 +93,70 @@ ExercisePage::ExercisePage(QWidget* parent)
             &QPushButton::clicked,
             this,
             &ExercisePage::deleteSelectedExercise);
+    connect(importButton_,
+            &QPushButton::clicked,
+            this,
+            &ExercisePage::importDataset);
+}
+
+void ExercisePage::importDataset()
+{
+    if (!repository_) {
+        QMessageBox::warning(this,
+                             QStringLiteral("导入失败"),
+                             QStringLiteral("运动仓库尚未连接"));
+        return;
+    }
+
+    const QString filePath = QFileDialog::getOpenFileName(
+        this,
+        QStringLiteral("选择运动数据集"),
+        QString{},
+        QStringLiteral("CSV 文件 (*.csv)"));
+    if (filePath.isEmpty()) return;
+
+    const auto parseResult = dataExchangeService_.importExercises(
+        filePath, DataFormat::Csv);
+    if (!parseResult.ok) {
+        QMessageBox::warning(this,
+                             QStringLiteral("导入失败"),
+                             parseResult.message);
+        return;
+    }
+
+    int storedRows = 0;
+    QStringList messages = parseResult.data.rowMessages;
+    for (const Exercise& exercise : parseResult.data.items) {
+        const auto existing = repository_->findById(exercise.id);
+        if (!existing.ok) {
+            messages.append(QStringLiteral("%1：查询失败：%2")
+                                .arg(exercise.id, existing.message));
+            continue;
+        }
+        const auto stored = existing.data.has_value()
+            ? repository_->update(exercise)
+            : repository_->add(exercise);
+        if (stored.ok) {
+            ++storedRows;
+        } else {
+            messages.append(QStringLiteral("%1：写入失败：%2")
+                                .arg(exercise.id, stored.message));
+        }
+    }
+
+    refreshTable();
+    QString summary = QStringLiteral(
+        "CSV 有效数据 %1 条，成功写入 SQLite %2 条，格式错误跳过 %3 条。")
+                          .arg(parseResult.data.importedRows)
+                          .arg(storedRows)
+                          .arg(parseResult.data.skippedRows);
+    if (!messages.isEmpty()) {
+        summary += QStringLiteral("\n\n前几条提示：\n%1")
+                       .arg(messages.mid(0, 8).join(QLatin1Char('\n')));
+    }
+    QMessageBox::information(this,
+                             QStringLiteral("运动数据导入完成"),
+                             summary);
 }
 
 void ExercisePage::setRepository(IExerciseRepository* repository)

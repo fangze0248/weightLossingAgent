@@ -70,6 +70,8 @@ set(PROJECT_SOURCES
         main.cpp
         mainwindow.cpp
         mainwindow.h
+        src/application/csvdataexchangeservice.cpp
+        src/application/csvdataexchangeservice.h
         src/application/plangenerationservice.cpp
         src/application/plangenerationservice.h
         src/interfaces/IPlanGenerationService.h
@@ -290,5 +292,35 @@ else()
     add_test(
         NAME plan_generation_service_test
         COMMAND $<TARGET_FILE:plan_generation_service_test>
+    )
+endif()
+
+add_executable(csv_data_exchange_service_test
+    tests/csv_data_exchange_service_test.cpp
+    src/application/csvdataexchangeservice.cpp
+)
+
+target_include_directories(csv_data_exchange_service_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+
+target_link_libraries(csv_data_exchange_service_test PRIVATE
+    persistence_core
+    Qt${QT_VERSION_MAJOR}::Core
+    Qt${QT_VERSION_MAJOR}::Sql
+)
+
+if(WIN32)
+    add_test(
+        NAME csv_data_exchange_service_test
+        COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt${QT_VERSION_MAJOR}::Core>;$ENV{PATH}"
+            $<TARGET_FILE:csv_data_exchange_service_test>
+    )
+else()
+    add_test(
+        NAME csv_data_exchange_service_test
+        COMMAND $<TARGET_FILE:csv_data_exchange_service_test>
     )
 endif()
