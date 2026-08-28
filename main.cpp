@@ -1,5 +1,12 @@
 #include "mainwindow.h"
 #include "database/databasemanager.h"
+#include "repositories/sqliteexerciserepository.h"
+#include "repositories/sqliteplanrepository.h"
+#include "repositories/sqlitereciperepository.h"
+#include "repositories/sqliteuserrepository.h"
+#include "recommendation/healthcalculator.h"
+#include "session/sessionmanager.h"
+#include "ui/appstyle.h"
 
 #include <QApplication>
 #include <QMessageBox>
@@ -9,6 +16,8 @@
 int main(int argc, char *argv[])
 {
     QApplication a(argc, argv);
+    QApplication::setStyle(QStringLiteral("Fusion"));
+    a.setStyleSheet(applicationStyleSheet());
     QCoreApplication::setOrganizationName(QStringLiteral("SummerSchool"));
     QCoreApplication::setApplicationName(QStringLiteral("WeightLossingAgent"));
 
@@ -24,7 +33,18 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    MainWindow w;
+    SqliteExerciseRepository exerciseRepository(databaseManager.database());
+    SqliteRecipeRepository recipeRepository(databaseManager.database());
+    SqlitePlanRepository planRepository(databaseManager.database());
+    SqliteUserRepository userRepository(databaseManager.database());
+    HealthCalculator healthCalculator;
+    SessionManager sessionManager;
+    MainWindow w(exerciseRepository,
+                 recipeRepository,
+                 planRepository,
+                 userRepository,
+                 healthCalculator,
+                 sessionManager);
     w.show();
     return QApplication::exec();
 }

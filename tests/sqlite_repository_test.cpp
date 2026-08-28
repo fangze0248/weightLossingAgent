@@ -1,5 +1,5 @@
 #include "database/databasemanager.h"
-#include "repositories/sqliteexerciseRepository.h"
+#include "repositories/sqliteexerciserepository.h"
 #include "repositories/sqlitefeedbackrepository.h"
 #include "repositories/sqliteplanrepository.h"
 #include "repositories/sqlitereciperepository.h"

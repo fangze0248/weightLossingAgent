@@ -19,8 +19,8 @@ add_library(persistence_core STATIC
     database/modeljsoncodec.cpp
     src/repositories/sqliteuserrepository.h
     src/repositories/sqliteuserrepository.cpp
-    src/repositories/sqliteexerciseRepository.h
-    src/repositories/sqliteexerciseRepository.cpp
+    src/repositories/sqliteexerciserepository.h
+    src/repositories/sqliteexerciserepository.cpp
     src/repositories/sqlitereciperepository.h
     src/repositories/sqlitereciperepository.cpp
     src/repositories/sqliteplanrepository.h
@@ -44,6 +44,8 @@ target_compile_features(persistence_core PUBLIC cxx_std_17)
 add_library(recommendation_core STATIC
     src/recommendation/recommendationcore.h
     src/recommendation/recommendationcore.cpp
+    src/recommendation/healthcalculator.h
+    src/recommendation/healthcalculator.cpp
 )
 
 target_include_directories(recommendation_core PUBLIC
@@ -62,6 +64,24 @@ set(PROJECT_SOURCES
         main.cpp
         mainwindow.cpp
         mainwindow.h
+        src/session/sessionmanager.cpp
+        src/session/sessionmanager.h
+        src/ui/appstyle.cpp
+        src/ui/appstyle.h
+        src/ui/dashboardpage.cpp
+        src/ui/dashboardpage.h
+        src/ui/exercisepage.cpp
+        src/ui/exercisepage.h
+        src/ui/healthpage.cpp
+        src/ui/healthpage.h
+        src/ui/loginpage.cpp
+        src/ui/loginpage.h
+        src/ui/planpage.cpp
+        src/ui/planpage.h
+        src/ui/profiledialog.cpp
+        src/ui/profiledialog.h
+        src/ui/recipepage.cpp
+        src/ui/recipepage.h
 )
 
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
@@ -137,6 +157,20 @@ target_link_libraries(contracts_compile_test PRIVATE
 add_test(
     NAME contracts_compile_test
     COMMAND contracts_compile_test
+)
+
+add_executable(health_calculator_test
+    tests/health_calculator_test.cpp
+)
+
+target_link_libraries(health_calculator_test PRIVATE
+    recommendation_core
+    Qt${QT_VERSION_MAJOR}::Core
+)
+
+add_test(
+    NAME health_calculator_test
+    COMMAND health_calculator_test
 )
 
 add_executable(sqlite_repository_test
