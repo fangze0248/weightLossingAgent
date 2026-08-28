@@ -16,6 +16,9 @@ QStringList stringListFromJson(const QString& json);
 QString ingredientsToJson(const QVector<Ingredient>& ingredients);
 QVector<Ingredient> ingredientsFromJson(const QString& json);
 
+QString nutritionFactsToJson(const NutritionFacts& nutrition);
+NutritionFacts nutritionFactsFromJson(const QString& json);
+
 QString weeklyPlanToJson(const WeeklyPlan& plan);
 std::optional<WeeklyPlan> weeklyPlanFromJson(
     const QString& json,

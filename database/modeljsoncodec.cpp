@@ -250,6 +250,58 @@ QVector<Ingredient> ingredientsFromJson(const QString& json)
     return document.isArray() ? ingredientsFromArray(document.array())
                               : QVector<Ingredient>{};
 }
+QString nutritionFactsToJson(const NutritionFacts& nutrition)
+{
+    QJsonObject object;
+    object.insert(QStringLiteral("caloriesKcal"), nutrition.caloriesKcal);
+    object.insert(QStringLiteral("proteinG"), nutrition.proteinG);
+    object.insert(QStringLiteral("carbohydrateG"), nutrition.carbohydrateG);
+    object.insert(QStringLiteral("fatG"), nutrition.fatG);
+    object.insert(QStringLiteral("saturatedFatG"), nutrition.saturatedFatG);
+    object.insert(QStringLiteral("fiberG"), nutrition.fiberG);
+    object.insert(QStringLiteral("sugarG"), nutrition.sugarG);
+    object.insert(QStringLiteral("sodiumMg"), nutrition.sodiumMg);
+    object.insert(QStringLiteral("cholesterolMg"), nutrition.cholesterolMg);
+
+    return QString::fromUtf8(
+        QJsonDocument(object).toJson(QJsonDocument::Compact));
+}
+
+NutritionFacts nutritionFactsFromJson(const QString& json)
+{
+    NutritionFacts nutrition;
+
+    QJsonParseError parseError;
+    const QJsonDocument document =
+        QJsonDocument::fromJson(json.toUtf8(), &parseError);
+
+    if (parseError.error != QJsonParseError::NoError
+        || !document.isObject()) {
+        return nutrition;
+    }
+
+    const QJsonObject object = document.object();
+    nutrition.caloriesKcal =
+        object.value(QStringLiteral("caloriesKcal")).toDouble();
+    nutrition.proteinG =
+        object.value(QStringLiteral("proteinG")).toDouble();
+    nutrition.carbohydrateG =
+        object.value(QStringLiteral("carbohydrateG")).toDouble();
+    nutrition.fatG =
+        object.value(QStringLiteral("fatG")).toDouble();
+    nutrition.saturatedFatG =
+        object.value(QStringLiteral("saturatedFatG")).toDouble();
+    nutrition.fiberG =
+        object.value(QStringLiteral("fiberG")).toDouble();
+    nutrition.sugarG =
+        object.value(QStringLiteral("sugarG")).toDouble();
+    nutrition.sodiumMg =
+        object.value(QStringLiteral("sodiumMg")).toDouble();
+    nutrition.cholesterolMg =
+        object.value(QStringLiteral("cholesterolMg")).toDouble();
+
+    return nutrition;
+}
 
 QString weeklyPlanToJson(const WeeklyPlan& plan)
 {

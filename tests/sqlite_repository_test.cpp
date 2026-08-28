@@ -9,6 +9,7 @@
 #include <QDate>
 #include <QDebug>
 #include <QTemporaryDir>
+#include <cmath>
 #include <cstdio>
 
 int main(int argc, char* argv[])
@@ -53,6 +54,77 @@ int main(int argc, char* argv[])
 
     const auto recipes = recipeRepository.findAll();
     if (!recipes.ok || recipes.data.size() != 6) return 11;
+
+    Recipe nutritionRecipe;
+    nutritionRecipe.id = QStringLiteral("R_NUTRITION_TEST");
+    nutritionRecipe.name = QStringLiteral("Nutrition Repository Test");
+    nutritionRecipe.ingredients = {
+        {QStringLiteral("Chicken breast"), 150.0, QStringLiteral("g")},
+        {QStringLiteral("Brown rice"), 120.0, QStringLiteral("g")}
+    };
+    nutritionRecipe.totalCalories = 510.0;
+    nutritionRecipe.nutritionPerServing.caloriesKcal = 510.0;
+    nutritionRecipe.nutritionPerServing.proteinG = 35.5;
+    nutritionRecipe.nutritionPerServing.carbohydrateG = 48.0;
+    nutritionRecipe.nutritionPerServing.fatG = 12.5;
+    nutritionRecipe.nutritionPerServing.saturatedFatG = 3.0;
+    nutritionRecipe.nutritionPerServing.fiberG = 6.5;
+    nutritionRecipe.nutritionPerServing.sugarG = 4.0;
+    nutritionRecipe.nutritionPerServing.sodiumMg = 420.0;
+    nutritionRecipe.nutritionPerServing.cholesterolMg = 72.0;
+    nutritionRecipe.servings = 2;
+    nutritionRecipe.mealType = MealType::Lunch;
+    nutritionRecipe.nutritionTags = {
+        QStringLiteral("high-protein"),
+        QStringLiteral("high-fiber")
+    };
+
+    if (!recipeRepository.add(nutritionRecipe).ok) return 20;
+
+    const auto loadedNutritionRecipe =
+        recipeRepository.findById(nutritionRecipe.id);
+    if (!loadedNutritionRecipe.ok
+        || !loadedNutritionRecipe.data.has_value()) {
+        return 21;
+    }
+
+    const auto almostEqual = [](double left, double right) {
+        return std::abs(left - right) < 0.000001;
+    };
+    const Recipe& storedRecipe = *loadedNutritionRecipe.data;
+    const NutritionFacts& storedNutrition =
+        storedRecipe.nutritionPerServing;
+
+    if (storedRecipe.servings != nutritionRecipe.servings
+        || !almostEqual(storedRecipe.totalCalories, 510.0)
+        || !almostEqual(storedNutrition.caloriesKcal, 510.0)
+        || !almostEqual(storedNutrition.proteinG, 35.5)
+        || !almostEqual(storedNutrition.carbohydrateG, 48.0)
+        || !almostEqual(storedNutrition.fatG, 12.5)
+        || !almostEqual(storedNutrition.saturatedFatG, 3.0)
+        || !almostEqual(storedNutrition.fiberG, 6.5)
+        || !almostEqual(storedNutrition.sugarG, 4.0)
+        || !almostEqual(storedNutrition.sodiumMg, 420.0)
+        || !almostEqual(storedNutrition.cholesterolMg, 72.0)) {
+        return 22;
+    }
+
+    nutritionRecipe.nutritionPerServing.proteinG = 40.0;
+    nutritionRecipe.servings = 3;
+    if (!recipeRepository.update(nutritionRecipe).ok) return 23;
+
+    const auto updatedNutritionRecipe =
+        recipeRepository.findById(nutritionRecipe.id);
+    if (!updatedNutritionRecipe.ok
+        || !updatedNutritionRecipe.data.has_value()
+        || updatedNutritionRecipe.data->servings != 3
+        || !almostEqual(
+            updatedNutritionRecipe.data->nutritionPerServing.proteinG,
+            40.0)) {
+        return 24;
+    }
+
+    if (!recipeRepository.remove(nutritionRecipe.id).data) return 25;
 
     WeeklyPlan plan;
     plan.planId = QStringLiteral("PLAN_TEST");
