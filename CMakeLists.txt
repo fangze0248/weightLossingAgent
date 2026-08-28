@@ -46,6 +46,12 @@ add_library(recommendation_core STATIC
     src/recommendation/recommendationcore.cpp
     src/recommendation/healthcalculator.h
     src/recommendation/healthcalculator.cpp
+    src/recommendation/ExerciseRecommender.h
+    src/recommendation/ExerciseRecommender.cpp
+    src/recommendation/MealRecommender.h
+    src/recommendation/MealRecommender.cpp
+    src/recommendation/WeeklyPlanner.h
+    src/recommendation/WeeklyPlanner.cpp
 )
 
 target_include_directories(recommendation_core PUBLIC
@@ -145,18 +151,49 @@ endif()
 
 enable_testing()
 
-add_executable(contracts_compile_test
+function(add_recommendation_test target_name source_file)
+    add_executable(${target_name}
+        ${source_file}
+    )
+
+    target_link_libraries(${target_name} PRIVATE
+        recommendation_core
+        Qt${QT_VERSION_MAJOR}::Core
+    )
+
+    if(WIN32)
+        add_test(
+            NAME ${target_name}
+            COMMAND ${CMAKE_COMMAND} -E env
+                "PATH=$<TARGET_FILE_DIR:Qt${QT_VERSION_MAJOR}::Core>;$ENV{PATH}"
+                $<TARGET_FILE:${target_name}>
+        )
+    else()
+        add_test(
+            NAME ${target_name}
+            COMMAND $<TARGET_FILE:${target_name}>
+        )
+    endif()
+endfunction()
+
+add_recommendation_test(
+    contracts_compile_test
     tests/contracts_compile_test.cpp
 )
 
-target_link_libraries(contracts_compile_test PRIVATE
-    recommendation_core
-    Qt${QT_VERSION_MAJOR}::Core
+add_recommendation_test(
+    exercise_recommender_test
+    tests/exercise_recommender_test.cpp
 )
 
-add_test(
-    NAME contracts_compile_test
-    COMMAND contracts_compile_test
+add_recommendation_test(
+    meal_recommender_test
+    tests/meal_recommender_test.cpp
+)
+
+add_recommendation_test(
+    weekly_planner_test
+    tests/weekly_planner_test.cpp
 )
 
 add_executable(health_calculator_test
@@ -183,7 +220,41 @@ target_link_libraries(sqlite_repository_test PRIVATE
     Qt${QT_VERSION_MAJOR}::Sql
 )
 
-add_test(
-    NAME sqlite_repository_test
-    COMMAND sqlite_repository_test
+if(WIN32)
+    add_test(
+        NAME sqlite_repository_test
+        COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt${QT_VERSION_MAJOR}::Core>;$ENV{PATH}"
+            $<TARGET_FILE:sqlite_repository_test>
+    )
+else()
+    add_test(
+        NAME sqlite_repository_test
+        COMMAND $<TARGET_FILE:sqlite_repository_test>
+    )
+endif()
+
+add_executable(recommendation_persistence_integration_test
+    tests/recommendation_persistence_integration_test.cpp
 )
+
+target_link_libraries(recommendation_persistence_integration_test PRIVATE
+    persistence_core
+    recommendation_core
+    Qt${QT_VERSION_MAJOR}::Core
+    Qt${QT_VERSION_MAJOR}::Sql
+)
+
+if(WIN32)
+    add_test(
+        NAME recommendation_persistence_integration_test
+        COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt${QT_VERSION_MAJOR}::Core>;$ENV{PATH}"
+            $<TARGET_FILE:recommendation_persistence_integration_test>
+    )
+else()
+    add_test(
+        NAME recommendation_persistence_integration_test
+        COMMAND $<TARGET_FILE:recommendation_persistence_integration_test>
+    )
+endif()
