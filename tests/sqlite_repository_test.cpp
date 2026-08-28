@@ -1,5 +1,5 @@
 #include "database/databasemanager.h"
-#include "repositories/sqliteexerciseRepository.h"
+#include "repositories/sqliteexerciserepository.h"
 #include "repositories/sqlitefeedbackrepository.h"
 #include "repositories/sqliteplanrepository.h"
 #include "repositories/sqlitereciperepository.h"
@@ -52,7 +52,7 @@ int main(int argc, char* argv[])
     if (!exerciseRepository.remove(testExercise.id).data) return 10;
 
     const auto recipes = recipeRepository.findAll();
-    if (!recipes.ok || recipes.data.size() != 3) return 11;
+    if (!recipes.ok || recipes.data.size() != 6) return 11;
 
     WeeklyPlan plan;
     plan.planId = QStringLiteral("PLAN_TEST");

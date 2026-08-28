@@ -19,8 +19,8 @@ add_library(persistence_core STATIC
     database/modeljsoncodec.cpp
     src/repositories/sqliteuserrepository.h
     src/repositories/sqliteuserrepository.cpp
-    src/repositories/sqliteexerciseRepository.h
-    src/repositories/sqliteexerciseRepository.cpp
+    src/repositories/sqliteexerciserepository.h
+    src/repositories/sqliteexerciserepository.cpp
     src/repositories/sqlitereciperepository.h
     src/repositories/sqlitereciperepository.cpp
     src/repositories/sqliteplanrepository.h
@@ -44,6 +44,14 @@ target_compile_features(persistence_core PUBLIC cxx_std_17)
 add_library(recommendation_core STATIC
     src/recommendation/recommendationcore.h
     src/recommendation/recommendationcore.cpp
+    src/recommendation/healthcalculator.h
+    src/recommendation/healthcalculator.cpp
+    src/recommendation/ExerciseRecommender.h
+    src/recommendation/ExerciseRecommender.cpp
+    src/recommendation/MealRecommender.h
+    src/recommendation/MealRecommender.cpp
+    src/recommendation/WeeklyPlanner.h
+    src/recommendation/WeeklyPlanner.cpp
 )
 
 target_include_directories(recommendation_core PUBLIC
@@ -62,6 +70,27 @@ set(PROJECT_SOURCES
         main.cpp
         mainwindow.cpp
         mainwindow.h
+        src/application/plangenerationservice.cpp
+        src/application/plangenerationservice.h
+        src/interfaces/IPlanGenerationService.h
+        src/session/sessionmanager.cpp
+        src/session/sessionmanager.h
+        src/ui/appstyle.cpp
+        src/ui/appstyle.h
+        src/ui/dashboardpage.cpp
+        src/ui/dashboardpage.h
+        src/ui/exercisepage.cpp
+        src/ui/exercisepage.h
+        src/ui/healthpage.cpp
+        src/ui/healthpage.h
+        src/ui/loginpage.cpp
+        src/ui/loginpage.h
+        src/ui/planpage.cpp
+        src/ui/planpage.h
+        src/ui/profiledialog.cpp
+        src/ui/profiledialog.h
+        src/ui/recipepage.cpp
+        src/ui/recipepage.h
 )
 
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
@@ -125,18 +154,63 @@ endif()
 
 enable_testing()
 
-add_executable(contracts_compile_test
+function(add_recommendation_test target_name source_file)
+    add_executable(${target_name}
+        ${source_file}
+    )
+
+    target_link_libraries(${target_name} PRIVATE
+        recommendation_core
+        Qt${QT_VERSION_MAJOR}::Core
+    )
+
+    if(WIN32)
+        add_test(
+            NAME ${target_name}
+            COMMAND ${CMAKE_COMMAND} -E env
+                "PATH=$<TARGET_FILE_DIR:Qt${QT_VERSION_MAJOR}::Core>;$ENV{PATH}"
+                $<TARGET_FILE:${target_name}>
+        )
+    else()
+        add_test(
+            NAME ${target_name}
+            COMMAND $<TARGET_FILE:${target_name}>
+        )
+    endif()
+endfunction()
+
+add_recommendation_test(
+    contracts_compile_test
     tests/contracts_compile_test.cpp
 )
 
-target_link_libraries(contracts_compile_test PRIVATE
+add_recommendation_test(
+    exercise_recommender_test
+    tests/exercise_recommender_test.cpp
+)
+
+add_recommendation_test(
+    meal_recommender_test
+    tests/meal_recommender_test.cpp
+)
+
+add_recommendation_test(
+    weekly_planner_test
+    tests/weekly_planner_test.cpp
+)
+
+add_executable(health_calculator_test
+    tests/health_calculator_test.cpp
+)
+
+target_link_libraries(health_calculator_test PRIVATE
     recommendation_core
     Qt${QT_VERSION_MAJOR}::Core
 )
 
 add_test(
-    NAME contracts_compile_test
-    COMMAND contracts_compile_test
+    NAME health_calculator_test
+    COMMAND health_calculator_test
 )
 
 add_executable(sqlite_repository_test
@@ -149,7 +223,72 @@ target_link_libraries(sqlite_repository_test PRIVATE
     Qt${QT_VERSION_MAJOR}::Sql
 )
 
-add_test(
-    NAME sqlite_repository_test
-    COMMAND sqlite_repository_test
+if(WIN32)
+    add_test(
+        NAME sqlite_repository_test
+        COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt${QT_VERSION_MAJOR}::Core>;$ENV{PATH}"
+            $<TARGET_FILE:sqlite_repository_test>
+    )
+else()
+    add_test(
+        NAME sqlite_repository_test
+        COMMAND $<TARGET_FILE:sqlite_repository_test>
+    )
+endif()
+
+add_executable(recommendation_persistence_integration_test
+    tests/recommendation_persistence_integration_test.cpp
 )
+
+target_link_libraries(recommendation_persistence_integration_test PRIVATE
+    persistence_core
+    recommendation_core
+    Qt${QT_VERSION_MAJOR}::Core
+    Qt${QT_VERSION_MAJOR}::Sql
+)
+
+if(WIN32)
+    add_test(
+        NAME recommendation_persistence_integration_test
+        COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt${QT_VERSION_MAJOR}::Core>;$ENV{PATH}"
+            $<TARGET_FILE:recommendation_persistence_integration_test>
+    )
+else()
+    add_test(
+        NAME recommendation_persistence_integration_test
+        COMMAND $<TARGET_FILE:recommendation_persistence_integration_test>
+    )
+endif()
+
+add_executable(plan_generation_service_test
+    tests/plan_generation_service_test.cpp
+    src/application/plangenerationservice.cpp
+)
+
+target_include_directories(plan_generation_service_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+
+target_link_libraries(plan_generation_service_test PRIVATE
+    persistence_core
+    recommendation_core
+    Qt${QT_VERSION_MAJOR}::Core
+    Qt${QT_VERSION_MAJOR}::Sql
+)
+
+if(WIN32)
+    add_test(
+        NAME plan_generation_service_test
+        COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt${QT_VERSION_MAJOR}::Core>;$ENV{PATH}"
+            $<TARGET_FILE:plan_generation_service_test>
+    )
+else()
+    add_test(
+        NAME plan_generation_service_test
+        COMMAND $<TARGET_FILE:plan_generation_service_test>
+    )
+endif()
