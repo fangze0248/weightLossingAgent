@@ -5,6 +5,7 @@
 #include "ui/planpage.h"
 #include "ui/recipepage.h"
 #include "interfaces/IUserRepository.h"
+#include "interfaces/IPlanGenerationService.h"
 #include "session/sessionmanager.h"
 
 #include <QFrame>
@@ -20,6 +21,7 @@
 MainWindow::MainWindow(IExerciseRepository& exerciseRepository,
                        IRecipeRepository& recipeRepository,
                        IPlanRepository& planRepository,
+                       IPlanGenerationService& planGenerationService,
                        IUserRepository& userRepository,
                        IHealthCalculator& healthCalculator,
                        SessionManager& sessionManager,
@@ -77,7 +79,10 @@ MainWindow::MainWindow(IExerciseRepository& exerciseRepository,
     auto* exercisePage = new ExercisePage(tabs);
     exercisePage->setRepository(&exerciseRepository);
     auto* recipePage = new RecipePage(recipeRepository, tabs);
-    auto* planPage = new PlanPage(planRepository, sessionManager, tabs);
+    auto* planPage = new PlanPage(planRepository,
+                                  planGenerationService,
+                                  sessionManager,
+                                  tabs);
 
     tabs->addTab(dashboardPage, QStringLiteral("主页"));
     tabs->addTab(exercisePage, QStringLiteral("运动管理"));
@@ -137,6 +142,10 @@ MainWindow::MainWindow(IExerciseRepository& exerciseRepository,
                     dashboardPage->refresh();
                 }
             });
+    connect(planPage,
+            &PlanPage::planChanged,
+            dashboardPage,
+            &DashboardPage::refresh);
 
     bool validStoredSession = false;
     if (sessionManager.hasCurrentUser()) {

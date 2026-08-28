@@ -223,7 +223,16 @@ bool DatabaseManager::seedDemoData(QString* errorMessage)
                  620, 'lunch', '["high-protein","low-fat"]'),
                 ('R003', 'Steamed Fish and Vegetables',
                  '[{"name":"Fish","amount":180,"unit":"g"},{"name":"Vegetables","amount":250,"unit":"g"}]',
-                 520, 'dinner', '["high-protein","low-fat"]')
+                 520, 'dinner', '["high-protein","low-fat"]'),
+                ('R004', 'Yogurt Banana Breakfast',
+                 '[{"name":"Yogurt","amount":200,"unit":"g"},{"name":"Banana","amount":1,"unit":"piece"}]',
+                 300, 'breakfast', '["balanced"]'),
+                ('R005', 'Beef Quinoa Bowl',
+                 '[{"name":"Lean beef","amount":120,"unit":"g"},{"name":"Quinoa","amount":100,"unit":"g"}]',
+                 450, 'lunch', '["high-protein"]'),
+                ('R006', 'Tofu Vegetable Dinner',
+                 '[{"name":"Tofu","amount":180,"unit":"g"},{"name":"Vegetables","amount":250,"unit":"g"}]',
+                 400, 'dinner', '["plant-protein","high-fiber"]')
         )SQL")
     };
 

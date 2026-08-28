@@ -1,9 +1,12 @@
 #include "ui/planpage.h"
 
 #include "interfaces/IPlanRepository.h"
+#include "interfaces/IPlanGenerationService.h"
 #include "session/sessionmanager.h"
 
 #include <QAbstractItemView>
+#include <QDate>
+#include <QDateEdit>
 #include <QFrame>
 #include <QHeaderView>
 #include <QHBoxLayout>
@@ -40,10 +43,12 @@ QString mealSummary(const QVector<MealPlanItem>& meals)
 } // namespace
 
 PlanPage::PlanPage(IPlanRepository& repository,
+                   IPlanGenerationService& generationService,
                    SessionManager& sessionManager,
                    QWidget* parent)
     : QWidget(parent),
       repository_(repository),
+      generationService_(generationService),
       sessionManager_(sessionManager)
 {
     setProperty("page", true);
@@ -62,7 +67,13 @@ PlanPage::PlanPage(IPlanRepository& repository,
                   .arg(sessionManager_.currentUserId())
             : QStringLiteral("当前未登录"));
     loadButton_ = new QPushButton(QStringLiteral("加载最新计划"), this);
-    loadButton_->setProperty("variant", "primary");
+    startDateEdit_ = new QDateEdit(this);
+    startDateEdit_->setCalendarPopup(true);
+    startDateEdit_->setDisplayFormat(QStringLiteral("yyyy-MM-dd"));
+    const QDate today = QDate::currentDate();
+    startDateEdit_->setDate(today.addDays(1 - today.dayOfWeek()));
+    generateButton_ = new QPushButton(QStringLiteral("生成并保存周计划"), this);
+    generateButton_->setProperty("variant", "primary");
 
     auto* searchCard = new QFrame(this);
     searchCard->setProperty("card", true);
@@ -70,6 +81,9 @@ PlanPage::PlanPage(IPlanRepository& repository,
     searchLayout->setContentsMargins(18, 12, 18, 12);
     searchLayout->addWidget(currentUserLabel_);
     searchLayout->addStretch();
+    searchLayout->addWidget(new QLabel(QStringLiteral("开始日期："), searchCard));
+    searchLayout->addWidget(startDateEdit_);
+    searchLayout->addWidget(generateButton_);
     searchLayout->addWidget(loadButton_);
 
     summaryLabel_ = new QLabel(QStringLiteral("尚未加载周计划"), this);
@@ -106,10 +120,53 @@ PlanPage::PlanPage(IPlanRepository& repository,
             &QPushButton::clicked,
             this,
             &PlanPage::loadLatestPlan);
+    connect(generateButton_,
+            &QPushButton::clicked,
+            this,
+            &PlanPage::generateWeeklyPlan);
     connect(&sessionManager_,
             &SessionManager::currentUserChanged,
             this,
             &PlanPage::updateCurrentUser);
+}
+
+void PlanPage::generateWeeklyPlan()
+{
+    const QString userId = sessionManager_.currentUserId();
+    if (userId.isEmpty()) {
+        QMessageBox::warning(this,
+                             QStringLiteral("未登录"),
+                             QStringLiteral("请先登录账号"));
+        return;
+    }
+
+    generateButton_->setEnabled(false);
+    generateButton_->setText(QStringLiteral("正在生成…"));
+    const auto result = generationService_.generateAndSave(
+        userId, startDateEdit_->date());
+    generateButton_->setEnabled(true);
+    generateButton_->setText(QStringLiteral("生成并保存周计划"));
+
+    if (!result.ok) {
+        QMessageBox::warning(
+            this,
+            QStringLiteral("生成失败"),
+            QStringLiteral("%1\n错误代码：%2")
+                .arg(result.message, result.code));
+        return;
+    }
+
+    displayPlan(result.data);
+    emit planChanged();
+
+    QString message = QStringLiteral("七天计划已生成并保存到 SQLite。");
+    if (!result.warnings.isEmpty()) {
+        message += QStringLiteral("\n\n提示：\n%1")
+                       .arg(result.warnings.join(QLatin1Char('\n')));
+    }
+    QMessageBox::information(this,
+                             QStringLiteral("生成成功"),
+                             message);
 }
 
 void PlanPage::loadLatestPlan()

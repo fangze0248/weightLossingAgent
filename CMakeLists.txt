@@ -70,6 +70,9 @@ set(PROJECT_SOURCES
         main.cpp
         mainwindow.cpp
         mainwindow.h
+        src/application/plangenerationservice.cpp
+        src/application/plangenerationservice.h
+        src/interfaces/IPlanGenerationService.h
         src/session/sessionmanager.cpp
         src/session/sessionmanager.h
         src/ui/appstyle.cpp
@@ -256,5 +259,36 @@ else()
     add_test(
         NAME recommendation_persistence_integration_test
         COMMAND $<TARGET_FILE:recommendation_persistence_integration_test>
+    )
+endif()
+
+add_executable(plan_generation_service_test
+    tests/plan_generation_service_test.cpp
+    src/application/plangenerationservice.cpp
+)
+
+target_include_directories(plan_generation_service_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+
+target_link_libraries(plan_generation_service_test PRIVATE
+    persistence_core
+    recommendation_core
+    Qt${QT_VERSION_MAJOR}::Core
+    Qt${QT_VERSION_MAJOR}::Sql
+)
+
+if(WIN32)
+    add_test(
+        NAME plan_generation_service_test
+        COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt${QT_VERSION_MAJOR}::Core>;$ENV{PATH}"
+            $<TARGET_FILE:plan_generation_service_test>
+    )
+else()
+    add_test(
+        NAME plan_generation_service_test
+        COMMAND $<TARGET_FILE:plan_generation_service_test>
     )
 endif()

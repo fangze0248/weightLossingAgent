@@ -6,6 +6,7 @@
 class IExerciseRepository;
 class IHealthCalculator;
 class IPlanRepository;
+class IPlanGenerationService;
 class IRecipeRepository;
 class IUserRepository;
 class SessionManager;
@@ -18,6 +19,7 @@ public:
     explicit MainWindow(IExerciseRepository& exerciseRepository,
                         IRecipeRepository& recipeRepository,
                         IPlanRepository& planRepository,
+                        IPlanGenerationService& planGenerationService,
                         IUserRepository& userRepository,
                         IHealthCalculator& healthCalculator,
                         SessionManager& sessionManager,
