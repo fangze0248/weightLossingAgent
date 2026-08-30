@@ -23,6 +23,41 @@ bool isFiniteNonNegative(double value)
     return std::isfinite(value) && value >= 0.0;
 }
 
+double normalizedNutritionValue(double value)
+{
+    return isFiniteNonNegative(value) ? value : 0.0;
+}
+
+NutritionFacts normalizedNutrition(const Recipe& recipe)
+{
+    NutritionFacts nutrition = recipe.nutritionPerServing;
+    // The legacy calorie field remains authoritative until all imported data
+    // consistently provides the detailed nutrition object.
+    nutrition.caloriesKcal = recipe.totalCalories;
+    nutrition.proteinG = normalizedNutritionValue(nutrition.proteinG);
+    nutrition.carbohydrateG = normalizedNutritionValue(nutrition.carbohydrateG);
+    nutrition.fatG = normalizedNutritionValue(nutrition.fatG);
+    nutrition.saturatedFatG = normalizedNutritionValue(nutrition.saturatedFatG);
+    nutrition.fiberG = normalizedNutritionValue(nutrition.fiberG);
+    nutrition.sugarG = normalizedNutritionValue(nutrition.sugarG);
+    nutrition.sodiumMg = normalizedNutritionValue(nutrition.sodiumMg);
+    nutrition.cholesterolMg = normalizedNutritionValue(nutrition.cholesterolMg);
+    return nutrition;
+}
+
+void addNutrition(NutritionFacts& total, const NutritionFacts& value)
+{
+    total.caloriesKcal += value.caloriesKcal;
+    total.proteinG += value.proteinG;
+    total.carbohydrateG += value.carbohydrateG;
+    total.fatG += value.fatG;
+    total.saturatedFatG += value.saturatedFatG;
+    total.fiberG += value.fiberG;
+    total.sugarG += value.sugarG;
+    total.sodiumMg += value.sodiumMg;
+    total.cholesterolMg += value.cholesterolMg;
+}
+
 QVector<Recipe> filterEligibleRecipes(
     const UserProfile& user,
     const QVector<Recipe>& recipeDatabase,
@@ -135,6 +170,7 @@ MealPlanItem makeMealPlanItem(const Recipe& recipe)
     item.ingredients = recipe.ingredients;
     item.nutritionTags = recipe.nutritionTags;
     item.calories = recipe.totalCalories;
+    item.nutrition = normalizedNutrition(recipe);
     return item;
 }
 
@@ -277,6 +313,9 @@ void appendChoiceToPlan(MealPlan& plan, const MealChoice& choice)
         break;
     }
     plan.totalCalories += choice.calories;
+    for (const MealPlanItem& item : choice.items) {
+        addNutrition(plan.totalNutrition, item.nutrition);
+    }
 }
 
 std::optional<MealPlan> findBestMultiRecipePlan(
@@ -493,16 +532,17 @@ ServiceResult<MealPlan> MealRecommender::generate(
         options.snackRatio,
         targetCalories);
 
-    const auto addMealCalories = [&singleRecipePlan](
+    const auto addMealNutrition = [&singleRecipePlan](
                                       const QVector<MealPlanItem>& items) {
         for (const MealPlanItem& item : items) {
             singleRecipePlan.totalCalories += item.calories;
+            addNutrition(singleRecipePlan.totalNutrition, item.nutrition);
         }
     };
-    addMealCalories(singleRecipePlan.breakfast);
-    addMealCalories(singleRecipePlan.lunch);
-    addMealCalories(singleRecipePlan.dinner);
-    addMealCalories(singleRecipePlan.snacks);
+    addMealNutrition(singleRecipePlan.breakfast);
+    addMealNutrition(singleRecipePlan.lunch);
+    addMealNutrition(singleRecipePlan.dinner);
+    addMealNutrition(singleRecipePlan.snacks);
 
     const double minimumDailyCalories =
         targetCalories * (1.0 - options.toleranceRatio);

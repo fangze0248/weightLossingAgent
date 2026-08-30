@@ -34,6 +34,7 @@ struct MealPlanItem {
     QVector<Ingredient> ingredients;
     QStringList nutritionTags;
     double calories = 0.0;
+    NutritionFacts nutrition;
 };
 
 struct MealPlan {
@@ -42,6 +43,7 @@ struct MealPlan {
     QVector<MealPlanItem> dinner;
     QVector<MealPlanItem> snacks;
     double totalCalories = 0.0;
+    NutritionFacts totalNutrition;
 };
 
 struct DailyPlan {

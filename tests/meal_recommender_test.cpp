@@ -39,6 +39,9 @@ int main()
     breakfast.id = QStringLiteral("breakfast-1");
     breakfast.name = QStringLiteral("燕麦早餐");
     breakfast.totalCalories = 450.0;
+    breakfast.nutritionPerServing.proteinG = 20.0;
+    breakfast.nutritionPerServing.carbohydrateG = 60.0;
+    breakfast.nutritionPerServing.fatG = 10.0;
     breakfast.mealType = MealType::Breakfast;
     breakfast.ingredients.append(
         {QStringLiteral("燕麦"), 50.0, QStringLiteral("克")});
@@ -166,6 +169,9 @@ int main()
     snack.id = QStringLiteral("snack-1");
     snack.name = QStringLiteral("水果加餐");
     snack.totalCalories = 150.0;
+    snack.nutritionPerServing.proteinG = 5.0;
+    snack.nutritionPerServing.carbohydrateG = 25.0;
+    snack.nutritionPerServing.fatG = 3.0;
     snack.mealType = MealType::Snack;
 
     const auto disabledSnackResult = recommender.generate(
@@ -210,12 +216,18 @@ int main()
     lunch.id = QStringLiteral("lunch-1");
     lunch.name = QStringLiteral("鸡胸肉午餐");
     lunch.totalCalories = 650.0;
+    lunch.nutritionPerServing.proteinG = 45.0;
+    lunch.nutritionPerServing.carbohydrateG = 70.0;
+    lunch.nutritionPerServing.fatG = 18.0;
     lunch.mealType = MealType::Lunch;
 
     Recipe dinner;
     dinner.id = QStringLiteral("dinner-1");
     dinner.name = QStringLiteral("鱼肉晚餐");
     dinner.totalCalories = 550.0;
+    dinner.nutritionPerServing.proteinG = 40.0;
+    dinner.nutritionPerServing.carbohydrateG = 30.0;
+    dinner.nutritionPerServing.fatG = 15.0;
     dinner.mealType = MealType::Dinner;
 
     const auto completeMealTypesResult = recommender.generate(
@@ -229,7 +241,15 @@ int main()
         || completeMealTypesResult.data.dinner.size() != 1
         || !completeMealTypesResult.data.snacks.isEmpty()
         || std::abs(completeMealTypesResult.data.totalCalories - 1650.0)
-            > 1e-9) {
+            > 1e-9
+        || std::abs(completeMealTypesResult.data.totalNutrition.caloriesKcal
+                    - 1650.0) > 1e-9
+        || std::abs(completeMealTypesResult.data.totalNutrition.proteinG
+                    - 105.0) > 1e-9
+        || std::abs(completeMealTypesResult.data.totalNutrition.carbohydrateG
+                    - 160.0) > 1e-9
+        || std::abs(completeMealTypesResult.data.totalNutrition.fatG
+                    - 43.0) > 1e-9) {
         return 20;
     }
 
@@ -244,7 +264,9 @@ int main()
         || selectedBreakfast.nutritionTags
             != QStringList{QStringLiteral("高纤维")}
         || std::abs(selectedBreakfast.calories - breakfast.totalCalories)
-            > 1e-9) {
+            > 1e-9
+        || std::abs(selectedBreakfast.nutrition.caloriesKcal - 450.0) > 1e-9
+        || std::abs(selectedBreakfast.nutrition.proteinG - 20.0) > 1e-9) {
         return 21;
     }
 
