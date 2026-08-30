@@ -21,6 +21,14 @@ int main()
         return 3;
     }
 
+    if (std::abs(options.dailyTargetVariationRatio - 0.10) > 1e-9) {
+        return 26;
+    }
+
+    // 既有测试聚焦原来的固定目标路径；波动行为在文件末尾单独验证。
+    WeeklyPlanOptions fixedTargetOptions = options;
+    fixedTargetOptions.dailyTargetVariationRatio = 0.0;
+
     WeeklyPlanner planner;
 
     UserProfile user;
@@ -66,7 +74,7 @@ int main()
             validStartDate,
             {exercise},
             recipes,
-            options).code != QStringLiteral("INVALID_USER")) {
+            fixedTargetOptions).code != QStringLiteral("INVALID_USER")) {
         return 4;
     }
 
@@ -78,7 +86,7 @@ int main()
             validStartDate,
             {exercise},
             recipes,
-            options).code != QStringLiteral("INVALID_USER")) {
+            fixedTargetOptions).code != QStringLiteral("INVALID_USER")) {
         return 5;
     }
 
@@ -91,7 +99,7 @@ int main()
             validStartDate,
             {exercise},
             recipes,
-            options).code != QStringLiteral("INVALID_CALORIE_NEED")) {
+            fixedTargetOptions).code != QStringLiteral("INVALID_CALORIE_NEED")) {
         return 6;
     }
 
@@ -101,11 +109,11 @@ int main()
             {},
             {exercise},
             recipes,
-            options).code != QStringLiteral("INVALID_START_DATE")) {
+            fixedTargetOptions).code != QStringLiteral("INVALID_START_DATE")) {
         return 7;
     }
 
-    WeeklyPlanOptions invalidDays = options;
+    WeeklyPlanOptions invalidDays = fixedTargetOptions;
     invalidDays.numberOfDays = 6;
     if (planner.generate(
             user,
@@ -123,7 +131,7 @@ int main()
             validStartDate,
             {},
             recipes,
-            options).code != QStringLiteral("EMPTY_EXERCISE_DATABASE")) {
+            fixedTargetOptions).code != QStringLiteral("EMPTY_EXERCISE_DATABASE")) {
         return 9;
     }
 
@@ -133,7 +141,7 @@ int main()
             validStartDate,
             {exercise},
             {},
-            options).code != QStringLiteral("EMPTY_RECIPE_DATABASE")) {
+            fixedTargetOptions).code != QStringLiteral("EMPTY_RECIPE_DATABASE")) {
         return 10;
     }
 
@@ -143,7 +151,7 @@ int main()
         validStartDate,
         {exercise},
         recipes,
-        options);
+        fixedTargetOptions);
     if (!validInputResult.ok
         || validInputResult.code != QStringLiteral("OK")
         || validInputResult.data.days.size() != 7
@@ -195,7 +203,7 @@ int main()
         validStartDate,
         {invalidExercise},
         recipes,
-        options);
+        fixedTargetOptions);
     if (exerciseFailureResult.code
         != QStringLiteral("EXERCISE_RECOMMENDATION_FAILED")
         || !exerciseFailureResult.message.contains(
@@ -209,7 +217,7 @@ int main()
         validStartDate,
         {exercise},
         {recipe},
-        options);
+        fixedTargetOptions);
     if (mealFailureResult.code
         != QStringLiteral("MEAL_RECOMMENDATION_FAILED")
         || !mealFailureResult.message.contains(
@@ -243,7 +251,7 @@ int main()
          secondLunch,
          dinnerRecipe,
          secondDinner},
-        options);
+        fixedTargetOptions);
 
     if (!diversityResult.ok || !diversityResult.warnings.isEmpty()) {
         return 17;
@@ -274,7 +282,7 @@ int main()
         }
     }
 
-    WeeklyPlanOptions duplicatesAllowed = options;
+    WeeklyPlanOptions duplicatesAllowed = fixedTargetOptions;
     duplicatesAllowed.avoidConsecutiveDuplicateExercises = false;
     duplicatesAllowed.avoidConsecutiveDuplicateRecipes = false;
     const auto duplicatesAllowedResult = planner.generate(
@@ -296,7 +304,7 @@ int main()
         validStartDate,
         {exercise, cycling},
         recipes,
-        options);
+        fixedTargetOptions);
     if (!partialFallbackResult.ok
         || partialFallbackResult.warnings.size() != 6) {
         return 21;
@@ -321,7 +329,7 @@ int main()
             validStartDate,
             {exercise},
             recipes,
-            options).code != QStringLiteral("INVALID_CALORIE_NEED")) {
+            fixedTargetOptions).code != QStringLiteral("INVALID_CALORIE_NEED")) {
         return 23;
     }
 
@@ -332,7 +340,7 @@ int main()
             QDate::fromJulianDay(std::numeric_limits<qint64>::max()),
             {exercise},
             recipes,
-            options).code != QStringLiteral("INVALID_START_DATE")) {
+            fixedTargetOptions).code != QStringLiteral("INVALID_START_DATE")) {
         return 24;
     }
 
@@ -343,12 +351,86 @@ int main()
         validStartDate,
         {exercise},
         recipes,
-        options);
+        fixedTargetOptions);
     if (!secondGeneration.ok
         || secondGeneration.data.planId == validInputResult.data.planId
         || validInputResult.data.generatedAt.timeSpec() != Qt::UTC
         || secondGeneration.data.generatedAt.timeSpec() != Qt::UTC) {
         return 25;
+    }
+
+    WeeklyPlanOptions variationOptions = fixedTargetOptions;
+    variationOptions.dailyTargetVariationRatio = 0.03;
+    variationOptions.randomSeed = 42;
+    variationOptions.avoidConsecutiveDuplicateExercises = false;
+    variationOptions.avoidConsecutiveDuplicateRecipes = false;
+    variationOptions.exerciseOptions.durationStepMinutes = 1;
+
+    const auto variationResult = planner.generate(
+        user,
+        calorieNeed,
+        validStartDate,
+        {exercise},
+        recipes,
+        variationOptions);
+    const auto repeatedVariationResult = planner.generate(
+        user,
+        calorieNeed,
+        validStartDate,
+        {exercise},
+        recipes,
+        variationOptions);
+
+    if (!variationResult.ok || !repeatedVariationResult.ok) {
+        return 27;
+    }
+
+    double weeklyIntakeTarget = 0.0;
+    double weeklyExerciseTarget = 0.0;
+    for (int dayIndex = 0; dayIndex < 7; ++dayIndex) {
+        const CalorieNeed& varied =
+            variationResult.data.days.at(dayIndex).calorieNeed;
+        const CalorieNeed& repeated =
+            repeatedVariationResult.data.days.at(dayIndex).calorieNeed;
+        weeklyIntakeTarget += varied.recommendedIntake;
+        weeklyExerciseTarget += varied.exerciseTarget;
+
+        if (std::abs(varied.recommendedIntake
+                     - repeated.recommendedIntake) > 1e-9
+            || std::abs(varied.exerciseTarget
+                        - repeated.exerciseTarget) > 1e-9
+            || varied.recommendedIntake
+                < calorieNeed.recommendedIntake * 0.97 - 1e-9
+            || varied.recommendedIntake
+                > calorieNeed.recommendedIntake * 1.03 + 1e-9) {
+            return 28;
+        }
+
+        if (dayIndex > 0
+            && std::abs(varied.recommendedIntake
+                        - variationResult.data.days.at(dayIndex - 1)
+                              .calorieNeed.recommendedIntake) <= 1e-9) {
+            return 29;
+        }
+    }
+
+    if (std::abs(weeklyIntakeTarget
+                 - calorieNeed.recommendedIntake * 7.0) > 1e-9
+        || std::abs(weeklyExerciseTarget
+                    - calorieNeed.exerciseTarget * 7.0) > 1e-9) {
+        return 30;
+    }
+
+    WeeklyPlanOptions invalidVariation = fixedTargetOptions;
+    invalidVariation.dailyTargetVariationRatio = 0.11;
+    if (planner.generate(
+            user,
+            calorieNeed,
+            validStartDate,
+            {exercise},
+            recipes,
+            invalidVariation).code != QStringLiteral("INVALID_OPTIONS")) {
+        return 31;
     }
 
     return 0;

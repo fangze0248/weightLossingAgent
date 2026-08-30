@@ -10,10 +10,35 @@
 namespace {
 
 constexpr int kRequiredNumberOfDays = 7;
+constexpr double kMaximumDailyTargetVariationRatio = 0.10;
+constexpr double kComparisonEpsilon = 1e-9;
+
+// 七个系数互不相同、总和为 0，因此既能制造自然波动，又不会改变周平均目标。
+constexpr double kDailyVariationPattern[kRequiredNumberOfDays] = {
+    -1.0, -0.65, -0.30, 0.0, 0.25, 0.70, 1.0};
 
 bool isFinitePositive(double value)
 {
     return std::isfinite(value) && value > 0.0;
+}
+
+CalorieNeed calorieNeedForDay(
+    const CalorieNeed& base,
+    int dayIndex,
+    const WeeklyPlanOptions& options)
+{
+    const int rotation = options.randomSeed.has_value()
+        ? static_cast<int>(*options.randomSeed % kRequiredNumberOfDays)
+        : 0;
+    const int patternIndex = (dayIndex + rotation) % kRequiredNumberOfDays;
+    const double multiplier = 1.0
+        + options.dailyTargetVariationRatio
+            * kDailyVariationPattern[patternIndex];
+
+    CalorieNeed result = base;
+    result.recommendedIntake *= multiplier;
+    result.exerciseTarget *= multiplier;
+    return result;
 }
 
 ServiceResult<DailyPlan> generateDailyPlan(
@@ -159,10 +184,19 @@ ServiceResult<WeeklyPlan> WeeklyPlanner::generate(
     }
 
     // 老师要求基础版本必须生成完整七天计划，不接受任意天数。
-    if (options.numberOfDays != kRequiredNumberOfDays) {
+    const bool invalidVariationRatio =
+        !std::isfinite(options.dailyTargetVariationRatio)
+        || options.dailyTargetVariationRatio < 0.0
+        || options.dailyTargetVariationRatio
+            > kMaximumDailyTargetVariationRatio + kComparisonEpsilon;
+
+    if (options.numberOfDays != kRequiredNumberOfDays
+        || invalidVariationRatio) {
         return ServiceResult<WeeklyPlan>::failure(
             QStringLiteral("INVALID_OPTIONS"),
-            QStringLiteral("基础周计划的天数必须固定为 7 天。"));
+            QStringLiteral(
+                "基础周计划的天数必须固定为 7 天，单日目标波动比例必须为"
+                " 0～10% 的有限数值。"));
     }
 
     if (exerciseDatabase.isEmpty()) {
@@ -187,6 +221,10 @@ ServiceResult<WeeklyPlan> WeeklyPlanner::generate(
 
     for (int dayIndex = 0; dayIndex < kRequiredNumberOfDays; ++dayIndex) {
         const QDate date = startDate.addDays(dayIndex);
+        const CalorieNeed dayCalorieNeed = calorieNeedForDay(
+            calorieNeed,
+            dayIndex,
+            options);
         WeeklyPlanOptions dayOptions = options;
         if (dayIndex > 0) {
             dayOptions = optionsAvoidingPreviousDay(
@@ -198,7 +236,7 @@ ServiceResult<WeeklyPlan> WeeklyPlanner::generate(
 
         auto dayResult = generateDailyPlan(
             user,
-            calorieNeed,
+            dayCalorieNeed,
             date,
             exerciseDatabase,
             recipeDatabase,
@@ -217,7 +255,7 @@ ServiceResult<WeeklyPlan> WeeklyPlanner::generate(
                     false);
             dayResult = generateDailyPlan(
                 user,
-                calorieNeed,
+                dayCalorieNeed,
                 date,
                 exerciseDatabase,
                 recipeDatabase,
@@ -242,7 +280,7 @@ ServiceResult<WeeklyPlan> WeeklyPlanner::generate(
                     true);
             dayResult = generateDailyPlan(
                 user,
-                calorieNeed,
+                dayCalorieNeed,
                 date,
                 exerciseDatabase,
                 recipeDatabase,
@@ -263,7 +301,7 @@ ServiceResult<WeeklyPlan> WeeklyPlanner::generate(
                 || options.avoidConsecutiveDuplicateRecipes)) {
             dayResult = generateDailyPlan(
                 user,
-                calorieNeed,
+                dayCalorieNeed,
                 date,
                 exerciseDatabase,
                 recipeDatabase,
@@ -273,6 +311,26 @@ ServiceResult<WeeklyPlan> WeeklyPlanner::generate(
                 dayResult.warnings.append(
                     QStringLiteral(
                         "%1 的候选不足，未能避免与前一天重复。")
+                        .arg(date.toString(Qt::ISODate)));
+            }
+        }
+
+        // 小型数据库或较粗的运动时长步长可能无法满足某个波动后的目标。
+        // 此时只让当天回退到基础目标，优先保证完整七天计划仍可生成。
+        if (!dayResult.ok
+            && options.dailyTargetVariationRatio > kComparisonEpsilon) {
+            dayResult = generateDailyPlan(
+                user,
+                calorieNeed,
+                date,
+                exerciseDatabase,
+                recipeDatabase,
+                options);
+
+            if (dayResult.ok) {
+                dayResult.warnings.append(
+                    QStringLiteral(
+                        "%1 的候选不足，已回退到基础摄入与运动目标。")
                         .arg(date.toString(Qt::ISODate)));
             }
         }

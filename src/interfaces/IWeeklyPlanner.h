@@ -17,6 +17,8 @@ struct WeeklyPlanOptions {
     int numberOfDays = 7;
     bool avoidConsecutiveDuplicateExercises = true;
     bool avoidConsecutiveDuplicateRecipes = true;
+    // 单日摄入与运动目标的最大波动比例；七天平均目标保持不变。
+    double dailyTargetVariationRatio = 0.10;
     std::optional<quint32> randomSeed;
     ExerciseRecommendationOptions exerciseOptions;
     MealRecommendationOptions mealOptions;
