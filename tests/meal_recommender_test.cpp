@@ -490,5 +490,91 @@ int main()
         return 33;
     }
 
+    // 热量和餐次比例完全相同时，应选择更接近三大营养素目标的组合。
+    // maximumItemsPerMeal 设为 1，使每餐只在两个等热量候选中选择一个。
+    Recipe macroBreakfastLow = breakfast;
+    macroBreakfastLow.id = QStringLiteral("macro-breakfast-low");
+    macroBreakfastLow.totalCalories = 300.0;
+    macroBreakfastLow.nutritionPerServing.proteinG = 1.0;
+    macroBreakfastLow.nutritionPerServing.carbohydrateG = 1.0;
+    macroBreakfastLow.nutritionPerServing.fatG = 1.0;
+    Recipe macroBreakfastTarget = macroBreakfastLow;
+    macroBreakfastTarget.id = QStringLiteral("macro-breakfast-target");
+    macroBreakfastTarget.nutritionPerServing.proteinG = 30.0;
+    macroBreakfastTarget.nutritionPerServing.carbohydrateG = 36.0;
+    macroBreakfastTarget.nutritionPerServing.fatG = 12.0;
+
+    Recipe macroLunchLow = lunch;
+    macroLunchLow.id = QStringLiteral("macro-lunch-low");
+    macroLunchLow.totalCalories = 400.0;
+    macroLunchLow.nutritionPerServing.proteinG = 1.0;
+    macroLunchLow.nutritionPerServing.carbohydrateG = 1.0;
+    macroLunchLow.nutritionPerServing.fatG = 1.0;
+    Recipe macroLunchTarget = macroLunchLow;
+    macroLunchTarget.id = QStringLiteral("macro-lunch-target");
+    macroLunchTarget.nutritionPerServing.proteinG = 40.0;
+    macroLunchTarget.nutritionPerServing.carbohydrateG = 48.0;
+    macroLunchTarget.nutritionPerServing.fatG = 16.0;
+
+    Recipe macroDinnerLow = dinner;
+    macroDinnerLow.id = QStringLiteral("macro-dinner-low");
+    macroDinnerLow.totalCalories = 300.0;
+    macroDinnerLow.nutritionPerServing.proteinG = 1.0;
+    macroDinnerLow.nutritionPerServing.carbohydrateG = 1.0;
+    macroDinnerLow.nutritionPerServing.fatG = 1.0;
+    Recipe macroDinnerTarget = macroDinnerLow;
+    macroDinnerTarget.id = QStringLiteral("macro-dinner-target");
+    macroDinnerTarget.nutritionPerServing.proteinG = 30.0;
+    macroDinnerTarget.nutritionPerServing.carbohydrateG = 36.0;
+    macroDinnerTarget.nutritionPerServing.fatG = 12.0;
+
+    MealRecommendationOptions macroOptions = options;
+    macroOptions.maximumItemsPerMeal = 1;
+    NutritionFacts macroTarget;
+    macroTarget.proteinG = 100.0;
+    macroTarget.carbohydrateG = 120.0;
+    macroTarget.fatG = 40.0;
+    macroOptions.nutritionTarget = macroTarget;
+
+    const auto macroResult = recommender.generate(
+        user,
+        1000.0,
+        {macroBreakfastLow,
+         macroBreakfastTarget,
+         macroLunchLow,
+         macroLunchTarget,
+         macroDinnerLow,
+         macroDinnerTarget},
+        macroOptions);
+
+    if (!macroResult.ok
+        || macroResult.data.breakfast.first().recipeId
+            != QStringLiteral("macro-breakfast-target")
+        || macroResult.data.lunch.first().recipeId
+            != QStringLiteral("macro-lunch-target")
+        || macroResult.data.dinner.first().recipeId
+            != QStringLiteral("macro-dinner-target")
+        || std::abs(macroResult.data.totalNutrition.proteinG - 100.0) > 1e-9
+        || std::abs(
+               macroResult.data.totalNutrition.carbohydrateG - 120.0)
+            > 1e-9
+        || std::abs(macroResult.data.totalNutrition.fatG - 40.0) > 1e-9) {
+        return 34;
+    }
+
+    MealRecommendationOptions invalidMacroOptions = options;
+    NutritionFacts invalidMacroTarget;
+    invalidMacroTarget.proteinG =
+        std::numeric_limits<double>::quiet_NaN();
+    invalidMacroOptions.nutritionTarget = invalidMacroTarget;
+    if (recommender.generate(
+            user,
+            1800.0,
+            database,
+            invalidMacroOptions).code
+        != QStringLiteral("INVALID_OPTIONS")) {
+        return 35;
+    }
+
     return 0;
 }

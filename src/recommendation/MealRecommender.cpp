@@ -318,6 +318,31 @@ void appendChoiceToPlan(MealPlan& plan, const MealChoice& choice)
     }
 }
 
+double macroDifference(
+    const NutritionFacts& actual,
+    const NutritionFacts& target)
+{
+    double totalRelativeDifference = 0.0;
+    int activeTargets = 0;
+
+    const auto addDifference = [&](double actualValue, double targetValue) {
+        // 值为 0 表示调用方没有为该营养素设置目标，不参与评分。
+        if (targetValue > kComparisonEpsilon) {
+            totalRelativeDifference +=
+                std::abs(actualValue - targetValue) / targetValue;
+            ++activeTargets;
+        }
+    };
+
+    addDifference(actual.proteinG, target.proteinG);
+    addDifference(actual.carbohydrateG, target.carbohydrateG);
+    addDifference(actual.fatG, target.fatG);
+
+    return activeTargets == 0
+        ? 0.0
+        : totalRelativeDifference / activeTargets;
+}
+
 std::optional<MealPlan> findBestMultiRecipePlan(
     const RecipesByMealType& groupedRecipes,
     double targetCalories,
@@ -360,6 +385,7 @@ std::optional<MealPlan> findBestMultiRecipePlan(
         targetCalories * (1.0 + options.toleranceRatio);
     std::optional<MealPlan> bestPlan;
     double bestRatioDifference = 0.0;
+    double bestMacroDifference = 0.0;
     double bestDailyDifference = 0.0;
     QVector<MealChoice> currentChoices;
 
@@ -386,23 +412,37 @@ std::optional<MealPlan> findBestMultiRecipePlan(
                     options);
                 const double dailyDifference =
                     std::abs(candidate.totalCalories - targetCalories);
+                const double candidateMacroDifference =
+                    options.nutritionTarget.has_value()
+                    ? macroDifference(
+                          candidate.totalNutrition,
+                          *options.nutritionTarget)
+                    : 0.0;
                 const bool isBetter =
                     !bestPlan.has_value()
                     || ratioDifference
                         < bestRatioDifference - kComparisonEpsilon
                     || (std::abs(ratioDifference - bestRatioDifference)
                             <= kComparisonEpsilon
-                        && (dailyDifference
-                                < bestDailyDifference - kComparisonEpsilon
-                            || (std::abs(
-                                    dailyDifference - bestDailyDifference)
+                        && (candidateMacroDifference
+                                < bestMacroDifference - kComparisonEpsilon
+                            || (std::abs(candidateMacroDifference
+                                            - bestMacroDifference)
                                     <= kComparisonEpsilon
-                                && mealPlanItemCount(candidate)
-                                    < mealPlanItemCount(*bestPlan))));
+                                && (dailyDifference
+                                        < bestDailyDifference
+                                            - kComparisonEpsilon
+                                    || (std::abs(dailyDifference
+                                                    - bestDailyDifference)
+                                            <= kComparisonEpsilon
+                                        && mealPlanItemCount(candidate)
+                                            < mealPlanItemCount(
+                                                *bestPlan))))));
 
                 if (isBetter) {
                     bestPlan = std::move(candidate);
                     bestRatioDifference = ratioDifference;
+                    bestMacroDifference = candidateMacroDifference;
                     bestDailyDifference = dailyDifference;
                 }
                 return;
@@ -471,17 +511,31 @@ ServiceResult<MealPlan> MealRecommender::generate(
         options.maximumItemsPerMeal <= 0
         || options.maximumItemsPerMeal > kMaximumSupportedItemsPerMeal;
 
+    bool invalidNutritionTarget = false;
+    if (options.nutritionTarget.has_value()) {
+        const NutritionFacts& target = *options.nutritionTarget;
+        invalidNutritionTarget =
+            !isFiniteNonNegative(target.proteinG)
+            || !isFiniteNonNegative(target.carbohydrateG)
+            || !isFiniteNonNegative(target.fatG)
+            || (target.proteinG <= kComparisonEpsilon
+                && target.carbohydrateG <= kComparisonEpsilon
+                && target.fatG <= kComparisonEpsilon);
+    }
+
     if (invalidTolerance
         || invalidRatios
         || invalidRatioTotal
         || invalidSnackOptions
-        || invalidItemCount) {
+        || invalidItemCount
+        || invalidNutritionTarget) {
         return ServiceResult<MealPlan>::failure(
             QStringLiteral("INVALID_OPTIONS"),
             QStringLiteral(
                 "食谱推荐选项不合法：容差必须为 0～10%，各餐比例必须为"
                 "非负有限数且合计为 1，加餐开关必须与加餐比例一致，"
-                "每餐最大项目数必须为 1～2。"));
+                "每餐最大项目数必须为 1～2；营养目标中的蛋白质、碳水和"
+                "脂肪必须为非负有限数，且至少一项大于 0。"));
     }
 
     const QVector<Recipe> eligibleRecipes = filterEligibleRecipes(
@@ -554,7 +608,8 @@ ServiceResult<MealPlan> MealRecommender::generate(
         && singleRecipePlan.totalCalories
             <= maximumDailyCalories + kComparisonEpsilon;
 
-    if (dailyCaloriesWithinTolerance) {
+    if (dailyCaloriesWithinTolerance
+        && !options.nutritionTarget.has_value()) {
         return ServiceResult<MealPlan>::success(
             std::move(singleRecipePlan),
             QStringLiteral("已生成每餐一份食谱的每日膳食计划。"));

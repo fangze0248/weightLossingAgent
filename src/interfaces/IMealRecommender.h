@@ -20,6 +20,8 @@ struct MealRecommendationOptions {
     int maximumItemsPerMeal = 2;
     bool includeSnack = false;
     std::optional<quint32> randomSeed;
+    // 可选的全天三大营养素目标。未提供时，推荐逻辑保持只按热量与餐次比例排序。
+    std::optional<NutritionFacts> nutritionTarget;
 };
 
 class IMealRecommender {
