@@ -18,6 +18,20 @@ Recipe recipeFromQuery(const QSqlQuery& query)
     recipe.ingredients = model_json_codec::ingredientsFromJson(
         query.value(QStringLiteral("ingredients_json")).toString());
     recipe.totalCalories = query.value(QStringLiteral("total_calories")).toDouble();
+    recipe.nutritionPerServing =
+        model_json_codec::nutritionFactsFromJson(
+            query.value(QStringLiteral("nutrition_json")).toString());
+
+    const int storedServings =
+        query.value(QStringLiteral("servings")).toInt();
+
+    recipe.servings = storedServings > 0 ? storedServings : 1;
+
+    // 兼容旧食谱：旧数据只有 total_calories
+    if (recipe.nutritionPerServing.caloriesKcal <= 0.0) {
+        recipe.nutritionPerServing.caloriesKcal =
+            recipe.totalCalories;
+    }
     recipe.mealType = mealTypeFromStorageString(
                           query.value(QStringLiteral("meal_type")).toString())
                           .value_or(MealType::Breakfast);
@@ -58,11 +72,21 @@ ServiceResult<Recipe> validateRecipe(const Recipe& recipe)
 
 void bindRecipe(QSqlQuery& query, const Recipe& recipe)
 {
+    NutritionFacts nutrition = recipe.nutritionPerServing;
+
+    // Keep the legacy calorie column synchronized with the new nutrition data.
+    if (nutrition.caloriesKcal <= 0.0) {
+        nutrition.caloriesKcal = recipe.totalCalories;
+    }
+
     query.bindValue(QStringLiteral(":id"), recipe.id.trimmed());
     query.bindValue(QStringLiteral(":name"), recipe.name.trimmed());
     query.bindValue(QStringLiteral(":ingredients"),
                     model_json_codec::ingredientsToJson(recipe.ingredients));
-    query.bindValue(QStringLiteral(":calories"), recipe.totalCalories);
+    query.bindValue(QStringLiteral(":calories"), nutrition.caloriesKcal);
+    query.bindValue(QStringLiteral(":nutrition"),
+                    model_json_codec::nutritionFactsToJson(nutrition));
+    query.bindValue(QStringLiteral(":servings"), recipe.servings);
     query.bindValue(QStringLiteral(":meal_type"), toStorageString(recipe.mealType));
     query.bindValue(QStringLiteral(":tags"),
                     model_json_codec::stringListToJson(recipe.nutritionTags));
@@ -149,9 +173,13 @@ ServiceResult<Recipe> SqliteRecipeRepository::add(const Recipe& recipe)
 
     QSqlQuery query(database_);
     query.prepare(QStringLiteral(
-        "INSERT INTO recipes (id, name, ingredients_json, total_calories, "
-        "meal_type, nutrition_tags_json) VALUES (:id, :name, :ingredients, "
-        ":calories, :meal_type, :tags)"));
+        "INSERT INTO recipes ("
+        "id, name, ingredients_json, total_calories, "
+        "nutrition_json, servings, meal_type, nutrition_tags_json"
+        ") VALUES ("
+        ":id, :name, :ingredients, :calories, "
+        ":nutrition, :servings, :meal_type, :tags"
+        ")"));
     bindRecipe(query, recipe);
     if (!query.exec()) {
         return ServiceResult<Recipe>::failure(
@@ -167,9 +195,15 @@ ServiceResult<Recipe> SqliteRecipeRepository::update(const Recipe& recipe)
 
     QSqlQuery query(database_);
     query.prepare(QStringLiteral(
-        "UPDATE recipes SET name = :name, ingredients_json = :ingredients, "
-        "total_calories = :calories, meal_type = :meal_type, "
-        "nutrition_tags_json = :tags WHERE id = :id"));
+        "UPDATE recipes SET "
+        "name = :name, "
+        "ingredients_json = :ingredients, "
+        "total_calories = :calories, "
+        "nutrition_json = :nutrition, "
+        "servings = :servings, "
+        "meal_type = :meal_type, "
+        "nutrition_tags_json = :tags "
+        "WHERE id = :id"));
     bindRecipe(query, recipe);
     if (!query.exec()) {
         return ServiceResult<Recipe>::failure(

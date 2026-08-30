@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "application/plangenerationservice.h"
+#include "application/csvdataexchangeservice.h"
 #include "database/databasemanager.h"
 #include "repositories/sqliteexerciserepository.h"
 #include "repositories/sqliteplanrepository.h"
@@ -47,11 +48,13 @@ int main(int argc, char *argv[])
                                                 planRepository,
                                                 healthCalculator,
                                                 weeklyPlanner);
+    CsvDataExchangeService dataExchangeService;
     SessionManager sessionManager;
     MainWindow w(exerciseRepository,
                  recipeRepository,
                  planRepository,
                  planGenerationService,
+                 dataExchangeService,
                  userRepository,
                  healthCalculator,
                  sessionManager);

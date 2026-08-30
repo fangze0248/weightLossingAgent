@@ -1,9 +1,11 @@
 #include "ui/recipepage.h"
 
+#include "interfaces/IDataExchangeService.h"
 #include "interfaces/IRecipeRepository.h"
 
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QFileDialog>
 #include <QFormLayout>
 #include <QFrame>
 #include <QHeaderView>
@@ -61,8 +63,12 @@ QStringList splitListText(const QString& text)
 
 } // namespace
 
-RecipePage::RecipePage(IRecipeRepository& repository, QWidget* parent)
-    : QWidget(parent), repository_(repository)
+RecipePage::RecipePage(IRecipeRepository& repository,
+                       IDataExchangeService& dataExchangeService,
+                       QWidget* parent)
+    : QWidget(parent),
+      repository_(repository),
+      dataExchangeService_(dataExchangeService)
 {
     setProperty("page", true);
 
@@ -105,6 +111,7 @@ RecipePage::RecipePage(IRecipeRepository& repository, QWidget* parent)
     deleteButton_ = new QPushButton(QStringLiteral("删除选中食谱"), this);
     deleteButton_->setProperty("variant", "danger");
     refreshButton_ = new QPushButton(QStringLiteral("刷新食谱"), this);
+    importButton_ = new QPushButton(QStringLiteral("从 CSV 导入"), this);
     recipeTable_ = new QTableWidget(0, 6, this);
     recipeTable_->setHorizontalHeaderLabels({
         QStringLiteral("编号"),
@@ -137,6 +144,7 @@ RecipePage::RecipePage(IRecipeRepository& repository, QWidget* parent)
     buttonLayout->addWidget(addButton_);
     buttonLayout->addWidget(deleteButton_);
     buttonLayout->addWidget(refreshButton_);
+    buttonLayout->addWidget(importButton_);
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(22, 14, 22, 18);
@@ -159,8 +167,65 @@ RecipePage::RecipePage(IRecipeRepository& repository, QWidget* parent)
             &QPushButton::clicked,
             this,
             &RecipePage::deleteSelectedRecipe);
+    connect(importButton_,
+            &QPushButton::clicked,
+            this,
+            &RecipePage::importDataset);
 
     refreshTable();
+}
+
+void RecipePage::importDataset()
+{
+    const QString filePath = QFileDialog::getOpenFileName(
+        this,
+        QStringLiteral("选择食谱数据集"),
+        QString{},
+        QStringLiteral("CSV 文件 (*.csv)"));
+    if (filePath.isEmpty()) return;
+
+    const auto parseResult = dataExchangeService_.importRecipes(
+        filePath, DataFormat::Csv);
+    if (!parseResult.ok) {
+        QMessageBox::warning(this,
+                             QStringLiteral("导入失败"),
+                             parseResult.message);
+        return;
+    }
+
+    int storedRows = 0;
+    QStringList messages = parseResult.data.rowMessages;
+    for (const Recipe& recipe : parseResult.data.items) {
+        const auto existing = repository_.findById(recipe.id);
+        if (!existing.ok) {
+            messages.append(QStringLiteral("%1：查询失败：%2")
+                                .arg(recipe.id, existing.message));
+            continue;
+        }
+        const auto stored = existing.data.has_value()
+            ? repository_.update(recipe)
+            : repository_.add(recipe);
+        if (stored.ok) {
+            ++storedRows;
+        } else {
+            messages.append(QStringLiteral("%1：写入失败：%2")
+                                .arg(recipe.id, stored.message));
+        }
+    }
+
+    refreshTable();
+    QString summary = QStringLiteral(
+        "CSV 有效数据 %1 条，成功写入 SQLite %2 条，格式错误跳过 %3 条。")
+                          .arg(parseResult.data.importedRows)
+                          .arg(storedRows)
+                          .arg(parseResult.data.skippedRows);
+    if (!messages.isEmpty()) {
+        summary += QStringLiteral("\n\n前几条提示：\n%1")
+                       .arg(messages.mid(0, 8).join(QLatin1Char('\n')));
+    }
+    QMessageBox::information(this,
+                             QStringLiteral("食谱数据导入完成"),
+                             summary);
 }
 
 void RecipePage::refreshTable()

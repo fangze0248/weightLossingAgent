@@ -25,7 +25,7 @@ public:
 private:
     static QString connectionName();
     bool executeStatement(const QString& sql, QString* errorMessage);
-
+    bool ensureRecipeNutritionColumns(QString* errorMessage);
     QString databasePath_;
     QSqlDatabase database_;
 };

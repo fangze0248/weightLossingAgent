@@ -6,6 +6,7 @@
 #include "ui/recipepage.h"
 #include "interfaces/IUserRepository.h"
 #include "interfaces/IPlanGenerationService.h"
+#include "interfaces/IDataExchangeService.h"
 #include "session/sessionmanager.h"
 
 #include <QFrame>
@@ -22,6 +23,7 @@ MainWindow::MainWindow(IExerciseRepository& exerciseRepository,
                        IRecipeRepository& recipeRepository,
                        IPlanRepository& planRepository,
                        IPlanGenerationService& planGenerationService,
+                       IDataExchangeService& dataExchangeService,
                        IUserRepository& userRepository,
                        IHealthCalculator& healthCalculator,
                        SessionManager& sessionManager,
@@ -76,9 +78,11 @@ MainWindow::MainWindow(IExerciseRepository& exerciseRepository,
                                             healthCalculator,
                                             sessionManager,
                                             tabs);
-    auto* exercisePage = new ExercisePage(tabs);
+    auto* exercisePage = new ExercisePage(dataExchangeService, tabs);
     exercisePage->setRepository(&exerciseRepository);
-    auto* recipePage = new RecipePage(recipeRepository, tabs);
+    auto* recipePage = new RecipePage(recipeRepository,
+                                      dataExchangeService,
+                                      tabs);
     auto* planPage = new PlanPage(planRepository,
                                   planGenerationService,
                                   sessionManager,

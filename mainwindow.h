@@ -4,6 +4,7 @@
 #include <QMainWindow>
 
 class IExerciseRepository;
+class IDataExchangeService;
 class IHealthCalculator;
 class IPlanRepository;
 class IPlanGenerationService;
@@ -20,6 +21,7 @@ public:
                         IRecipeRepository& recipeRepository,
                         IPlanRepository& planRepository,
                         IPlanGenerationService& planGenerationService,
+                        IDataExchangeService& dataExchangeService,
                         IUserRepository& userRepository,
                         IHealthCalculator& healthCalculator,
                         SessionManager& sessionManager,

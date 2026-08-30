@@ -1,0 +1,4 @@
+id,name,total_calories,protein_g,carbohydrate_g,fat_g,saturated_fat_g,fiber_g,sugar_g,sodium_mg,cholesterol_mg,servings,meal_type,ingredients,nutrition_tags
+R101,燕麦鸡蛋早餐,420,24,48,15,4,7,5,380,190,1,breakfast,燕麦:50:g|鸡蛋:2:个,高蛋白|均衡
+R102,鸡胸肉米饭,620,46,72,18,4,6,4,520,95,1,lunch,鸡胸肉:150:g|米饭:150:g,高蛋白|低脂
+R103,清蒸鱼蔬菜,520,42,38,20,4,9,6,460,80,1,dinner,鱼肉:180:g|蔬菜:250:g,高蛋白|高纤维

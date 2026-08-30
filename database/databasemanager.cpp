@@ -98,6 +98,59 @@ bool DatabaseManager::executeStatement(
     return false;
 }
 
+bool DatabaseManager::ensureRecipeNutritionColumns(
+    QString* errorMessage)
+{
+    QSqlQuery query(database_);
+
+    if (!query.exec(QStringLiteral("PRAGMA table_info(recipes)"))) {
+        if (errorMessage) {
+            *errorMessage = query.lastError().text();
+        }
+        return false;
+    }
+
+    bool hasNutritionJson = false;
+    bool hasServings = false;
+
+    while (query.next()) {
+        // PRAGMA table_info 返回结果的第1列是字段名称
+        const QString columnName = query.value(1).toString();
+
+        if (columnName == QStringLiteral("nutrition_json")) {
+            hasNutritionJson = true;
+        } else if (columnName == QStringLiteral("servings")) {
+            hasServings = true;
+        }
+    }
+
+    if (!hasNutritionJson) {
+        if (!executeStatement(
+                QStringLiteral(
+                    "ALTER TABLE recipes "
+                    "ADD COLUMN nutrition_json "
+                    "TEXT NOT NULL DEFAULT '{}'"),
+                errorMessage)) {
+            return false;
+        }
+    }
+
+    if (!hasServings) {
+        if (!executeStatement(
+                QStringLiteral(
+                    "ALTER TABLE recipes "
+                    "ADD COLUMN servings INTEGER NOT NULL "
+                    "DEFAULT 1 CHECK(servings > 0)"),
+                errorMessage)) {
+            return false;
+        }
+    }
+
+    return executeStatement(
+        QStringLiteral("PRAGMA user_version = 2"),
+        errorMessage);
+}
+
 bool DatabaseManager::initialize(QString* errorMessage)
 {
     if (!database_.isOpen()) {
@@ -142,6 +195,9 @@ bool DatabaseManager::initialize(QString* errorMessage)
                 name TEXT NOT NULL,
                 ingredients_json TEXT NOT NULL DEFAULT '[]',
                 total_calories REAL NOT NULL CHECK(total_calories >= 0),
+                nutrition_json TEXT NOT NULL DEFAULT '{}',
+                servings INTEGER NOT NULL DEFAULT 1
+                CHECK(servings > 0),
                 meal_type TEXT NOT NULL,
                 nutrition_tags_json TEXT NOT NULL DEFAULT '[]'
             )
@@ -181,9 +237,12 @@ bool DatabaseManager::initialize(QString* errorMessage)
             return false;
         }
     }
-
+    if (!ensureRecipeNutritionColumns(errorMessage)) {
+        return false;
+    }
     return true;
 }
+
 
 bool DatabaseManager::seedDemoData(QString* errorMessage)
 {
