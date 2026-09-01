@@ -132,11 +132,23 @@ int main(int argc, char* argv[])
     plan.startDate = QDate(2026, 8, 26);
     plan.generatedAt = QDateTime::currentDateTimeUtc();
     plan.days.append(DailyPlan{plan.startDate});
+    plan.days.first().meals.totalNutrition.caloriesKcal = 510.0;
+    plan.days.first().meals.totalNutrition.proteinG = 35.5;
+    plan.days.first().meals.breakfast.append(MealPlanItem{});
+    plan.days.first().meals.breakfast.first().nutrition =
+        nutritionRecipe.nutritionPerServing;
     if (!planRepository.save(plan).ok) return 12;
 
     const auto loadedPlan = planRepository.findById(plan.planId);
     if (!loadedPlan.ok || !loadedPlan.data.has_value()
-        || loadedPlan.data->days.size() != 1) return 13;
+        || loadedPlan.data->days.size() != 1
+        || !almostEqual(
+            loadedPlan.data->days.first().meals.totalNutrition.proteinG,
+            35.5)
+        || !almostEqual(
+            loadedPlan.data->days.first().meals.breakfast.first()
+                .nutrition.proteinG,
+            40.0)) return 13;
 
     Feedback feedback;
     feedback.id = QStringLiteral("FB_TEST");

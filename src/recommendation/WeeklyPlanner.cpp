@@ -10,10 +10,75 @@
 namespace {
 
 constexpr int kRequiredNumberOfDays = 7;
+constexpr double kMaximumDailyTargetVariationRatio = 0.10;
+constexpr double kComparisonEpsilon = 1e-9;
+constexpr double kUnderweightBmiThreshold = 18.5;
+constexpr double kOverweightBmiThreshold = 24.0;
+constexpr double kProteinEnergyRatio = 0.20;
+constexpr double kCarbohydrateEnergyRatio = 0.50;
+constexpr double kFatEnergyRatio = 0.30;
+constexpr double kCaloriesPerGramProtein = 4.0;
+constexpr double kCaloriesPerGramCarbohydrate = 4.0;
+constexpr double kCaloriesPerGramFat = 9.0;
+
+// 七个系数互不相同、总和为 0，因此既能制造自然波动，又不会改变周平均目标。
+constexpr double kDailyVariationPattern[kRequiredNumberOfDays] = {
+    -1.0, -0.65, -0.30, 0.0, 0.25, 0.70, 1.0};
 
 bool isFinitePositive(double value)
 {
     return std::isfinite(value) && value > 0.0;
+}
+
+double bmiOf(const UserProfile& user)
+{
+    const double heightMeters = user.heightCm / 100.0;
+    return user.weightKg / (heightMeters * heightMeters);
+}
+
+NutritionFacts automaticNutritionTarget(double targetCalories)
+{
+    NutritionFacts target;
+    target.caloriesKcal = targetCalories;
+    target.proteinG =
+        targetCalories * kProteinEnergyRatio / kCaloriesPerGramProtein;
+    target.carbohydrateG = targetCalories
+        * kCarbohydrateEnergyRatio / kCaloriesPerGramCarbohydrate;
+    target.fatG = targetCalories * kFatEnergyRatio / kCaloriesPerGramFat;
+    return target;
+}
+
+CalorieNeed calorieNeedForDay(
+    const CalorieNeed& base,
+    int dayIndex,
+    const WeeklyPlanOptions& options)
+{
+    const int rotation = options.randomSeed.has_value()
+        ? static_cast<int>(*options.randomSeed % kRequiredNumberOfDays)
+        : 0;
+    const int patternIndex = (dayIndex + rotation) % kRequiredNumberOfDays;
+    const double multiplier = 1.0
+        + options.dailyTargetVariationRatio
+            * kDailyVariationPattern[patternIndex];
+
+    CalorieNeed result = base;
+    result.recommendedIntake *= multiplier;
+    result.exerciseTarget *= multiplier;
+    return result;
+}
+
+WeeklyPlanOptions optionsForDay(
+    const WeeklyPlanOptions& base,
+    int dayIndex)
+{
+    WeeklyPlanOptions result = base;
+    if (base.randomSeed.has_value()) {
+        // 每天派生不同种子；相同周种子仍可完整复现同一份七天计划。
+        result.mealOptions.randomSeed =
+            *base.randomSeed
+            + 0x9e3779b9U * static_cast<quint32>(dayIndex + 1);
+    }
+    return result;
 }
 
 ServiceResult<DailyPlan> generateDailyPlan(
@@ -40,11 +105,18 @@ ServiceResult<DailyPlan> generateDailyPlan(
     }
 
     MealRecommender mealRecommender;
+    MealRecommendationOptions mealOptions = options.mealOptions;
+    if (options.autoCalculateNutritionTarget
+        && !mealOptions.nutritionTarget.has_value()) {
+        // 使用当天的摄入目标计算，保证七天热量波动时营养目标同步变化。
+        mealOptions.nutritionTarget = automaticNutritionTarget(
+            calorieNeed.recommendedIntake);
+    }
     const auto mealResult = mealRecommender.generate(
         user,
         calorieNeed.recommendedIntake,
         recipeDatabase,
-        options.mealOptions);
+        mealOptions);
 
     if (!mealResult.ok) {
         return ServiceResult<DailyPlan>::failure(
@@ -136,10 +208,39 @@ ServiceResult<WeeklyPlan> WeeklyPlanner::generate(
     const WeeklyPlanOptions& options) const
 {
     // userId 将写入 WeeklyPlan，体重则供每日运动热量计算使用。
-    if (user.id.trimmed().isEmpty() || !isFinitePositive(user.weightKg)) {
+    if (user.id.trimmed().isEmpty()
+        || !isFinitePositive(user.weightKg)
+        || !isFinitePositive(user.heightCm)) {
         return ServiceResult<WeeklyPlan>::failure(
             QStringLiteral("INVALID_USER"),
-            QStringLiteral("用户 ID 不能为空，体重必须是大于 0 的有限数值。"));
+            QStringLiteral(
+                "用户 ID 不能为空，身高和体重必须是大于 0 的有限数值。"));
+    }
+
+    const bool usesAutomaticNutritionTarget =
+        options.autoCalculateNutritionTarget
+        && !options.mealOptions.nutritionTarget.has_value();
+    const double currentBmi = bmiOf(user);
+    if (usesAutomaticNutritionTarget
+        && user.goalType == GoalType::Lose
+        && currentBmi < kUnderweightBmiThreshold) {
+        return ServiceResult<WeeklyPlan>::failure(
+            QStringLiteral("WEIGHT_LOSS_NOT_RECOMMENDED"),
+            QStringLiteral(
+                "当前 BMI 低于 18.5，不适合自动生成减重饮食计划。"));
+    }
+
+    if (usesAutomaticNutritionTarget
+        && user.goalType == GoalType::Lose
+        && isFinitePositive(user.targetWeightKg)) {
+        UserProfile targetProfile = user;
+        targetProfile.weightKg = user.targetWeightKg;
+        if (bmiOf(targetProfile) < kUnderweightBmiThreshold) {
+            return ServiceResult<WeeklyPlan>::failure(
+                QStringLiteral("UNSAFE_TARGET_WEIGHT"),
+                QStringLiteral(
+                    "目标体重对应的 BMI 低于 18.5，请先调整减重目标。"));
+        }
     }
 
     // 周计划直接使用这两个由 HealthCalculator 提供的每日目标。
@@ -159,10 +260,19 @@ ServiceResult<WeeklyPlan> WeeklyPlanner::generate(
     }
 
     // 老师要求基础版本必须生成完整七天计划，不接受任意天数。
-    if (options.numberOfDays != kRequiredNumberOfDays) {
+    const bool invalidVariationRatio =
+        !std::isfinite(options.dailyTargetVariationRatio)
+        || options.dailyTargetVariationRatio < 0.0
+        || options.dailyTargetVariationRatio
+            > kMaximumDailyTargetVariationRatio + kComparisonEpsilon;
+
+    if (options.numberOfDays != kRequiredNumberOfDays
+        || invalidVariationRatio) {
         return ServiceResult<WeeklyPlan>::failure(
             QStringLiteral("INVALID_OPTIONS"),
-            QStringLiteral("基础周计划的天数必须固定为 7 天。"));
+            QStringLiteral(
+                "基础周计划的天数必须固定为 7 天，单日目标波动比例必须为"
+                " 0～10% 的有限数值。"));
     }
 
     if (exerciseDatabase.isEmpty()) {
@@ -184,13 +294,26 @@ ServiceResult<WeeklyPlan> WeeklyPlanner::generate(
     weeklyPlan.generatedAt = QDateTime::currentDateTimeUtc();
 
     QStringList warnings;
+    if (usesAutomaticNutritionTarget
+        && user.goalType == GoalType::Lose
+        && currentBmi < kOverweightBmiThreshold) {
+        warnings.append(QStringLiteral(
+            "当前 BMI 处于正常范围，继续减重前建议确认目标体重是否合理。"));
+    }
 
     for (int dayIndex = 0; dayIndex < kRequiredNumberOfDays; ++dayIndex) {
         const QDate date = startDate.addDays(dayIndex);
-        WeeklyPlanOptions dayOptions = options;
+        const CalorieNeed dayCalorieNeed = calorieNeedForDay(
+            calorieNeed,
+            dayIndex,
+            options);
+        const WeeklyPlanOptions baseDayOptions = optionsForDay(
+            options,
+            dayIndex);
+        WeeklyPlanOptions dayOptions = baseDayOptions;
         if (dayIndex > 0) {
             dayOptions = optionsAvoidingPreviousDay(
-                options,
+                baseDayOptions,
                 weeklyPlan.days.last(),
                 options.avoidConsecutiveDuplicateExercises,
                 options.avoidConsecutiveDuplicateRecipes);
@@ -198,7 +321,7 @@ ServiceResult<WeeklyPlan> WeeklyPlanner::generate(
 
         auto dayResult = generateDailyPlan(
             user,
-            calorieNeed,
+            dayCalorieNeed,
             date,
             exerciseDatabase,
             recipeDatabase,
@@ -211,13 +334,13 @@ ServiceResult<WeeklyPlan> WeeklyPlanner::generate(
             && options.avoidConsecutiveDuplicateRecipes) {
             const WeeklyPlanOptions exerciseOnlyOptions =
                 optionsAvoidingPreviousDay(
-                    options,
+                    baseDayOptions,
                     weeklyPlan.days.last(),
                     true,
                     false);
             dayResult = generateDailyPlan(
                 user,
-                calorieNeed,
+                dayCalorieNeed,
                 date,
                 exerciseDatabase,
                 recipeDatabase,
@@ -236,13 +359,13 @@ ServiceResult<WeeklyPlan> WeeklyPlanner::generate(
             && options.avoidConsecutiveDuplicateRecipes) {
             const WeeklyPlanOptions recipeOnlyOptions =
                 optionsAvoidingPreviousDay(
-                    options,
+                    baseDayOptions,
                     weeklyPlan.days.last(),
                     false,
                     true);
             dayResult = generateDailyPlan(
                 user,
-                calorieNeed,
+                dayCalorieNeed,
                 date,
                 exerciseDatabase,
                 recipeDatabase,
@@ -263,16 +386,36 @@ ServiceResult<WeeklyPlan> WeeklyPlanner::generate(
                 || options.avoidConsecutiveDuplicateRecipes)) {
             dayResult = generateDailyPlan(
                 user,
-                calorieNeed,
+                dayCalorieNeed,
                 date,
                 exerciseDatabase,
                 recipeDatabase,
-                options);
+                baseDayOptions);
 
             if (dayResult.ok) {
                 dayResult.warnings.append(
                     QStringLiteral(
                         "%1 的候选不足，未能避免与前一天重复。")
+                        .arg(date.toString(Qt::ISODate)));
+            }
+        }
+
+        // 小型数据库或较粗的运动时长步长可能无法满足某个波动后的目标。
+        // 此时只让当天回退到基础目标，优先保证完整七天计划仍可生成。
+        if (!dayResult.ok
+            && options.dailyTargetVariationRatio > kComparisonEpsilon) {
+            dayResult = generateDailyPlan(
+                user,
+                calorieNeed,
+                date,
+                exerciseDatabase,
+                recipeDatabase,
+                baseDayOptions);
+
+            if (dayResult.ok) {
+                dayResult.warnings.append(
+                    QStringLiteral(
+                        "%1 的候选不足，已回退到基础摄入与运动目标。")
                         .arg(date.toString(Qt::ISODate)));
             }
         }

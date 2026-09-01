@@ -13,6 +13,7 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QRandomGenerator>
 #include <QStringList>
 #include <QTableWidget>
 #include <QTableWidgetItem>
@@ -142,8 +143,12 @@ void PlanPage::generateWeeklyPlan()
 
     generateButton_->setEnabled(false);
     generateButton_->setText(QStringLiteral("正在生成…"));
+    WeeklyPlanOptions options;
+    // 每次点击生成新的周种子，让候选充分时的菜单有所变化。
+    // 调试或测试仍可由调用方传入固定种子复现完整结果。
+    options.randomSeed = QRandomGenerator::global()->generate();
     const auto result = generationService_.generateAndSave(
-        userId, startDateEdit_->date());
+        userId, startDateEdit_->date(), options);
     generateButton_->setEnabled(true);
     generateButton_->setText(QStringLiteral("生成并保存周计划"));
 

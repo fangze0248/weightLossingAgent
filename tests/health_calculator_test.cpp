@@ -34,6 +34,41 @@ int main()
     if (!approximatelyEqual(result.data.dietDeficit, 385.0)) return 6;
     if (!approximatelyEqual(result.data.recommendedIntake, 2364.3125)) return 7;
     if (!approximatelyEqual(result.data.exerciseTarget, 165.0)) return 8;
+    if (result.data.bmiEvaluation != QStringLiteral("Overweight")) return 10;
+
+    UserProfile normalBmiUser = user;
+    normalBmiUser.heightCm = 170.0;
+    normalBmiUser.weightKg = 60.0;
+    const auto normalBmiResult = calculator.calculate(normalBmiUser);
+    if (!normalBmiResult.ok
+        || normalBmiResult.data.bmiEvaluation
+            != QStringLiteral("Normal weight")
+        || !normalBmiResult.warnings.join(QLatin1Char('|')).contains(
+            QStringLiteral("normal range"))) {
+        return 11;
+    }
+
+    UserProfile underweightUser = normalBmiUser;
+    underweightUser.weightKg = 45.0;
+    const auto underweightResult = calculator.calculate(underweightUser);
+    if (!underweightResult.ok
+        || underweightResult.data.bmiEvaluation
+            != QStringLiteral("Underweight")
+        || !underweightResult.warnings.join(QLatin1Char('|')).contains(
+            QStringLiteral("not recommended"))) {
+        return 12;
+    }
+
+    UserProfile obesityBoundaryUser = user;
+    obesityBoundaryUser.heightCm = 175.0;
+    obesityBoundaryUser.weightKg = 85.75;
+    const auto obesityBoundaryResult = calculator.calculate(
+        obesityBoundaryUser);
+    if (!obesityBoundaryResult.ok
+        || obesityBoundaryResult.data.bmiEvaluation
+            != QStringLiteral("Obesity")) {
+        return 13;
+    }
 
     user.heightCm = 0.0;
     if (calculator.calculate(user).ok) return 9;

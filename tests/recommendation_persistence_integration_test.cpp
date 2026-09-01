@@ -57,10 +57,7 @@ int main(int argc, char* argv[])
 
     if (!weeklyResult.ok || weeklyResult.data.days.size() != 7) return 8;
     if (weeklyResult.data.userId != userResult.data->id) return 9;
-    if (std::abs(weeklyResult.data.totalCaloriesIn - 7.0 * 1560.0) > 1e-9) {
-        return 10;
-    }
-
+    double calculatedCaloriesIn = 0.0;
     for (const DailyPlan& day : weeklyResult.data.days) {
         if (day.exercises.isEmpty()
             || day.meals.breakfast.isEmpty()
@@ -68,6 +65,11 @@ int main(int argc, char* argv[])
             || day.meals.dinner.isEmpty()) {
             return 11;
         }
+        calculatedCaloriesIn += day.meals.totalCalories;
+    }
+    if (std::abs(weeklyResult.data.totalCaloriesIn - calculatedCaloriesIn)
+        > 1e-9) {
+        return 10;
     }
 
     const auto saveResult = planRepository.save(weeklyResult.data);

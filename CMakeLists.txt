@@ -201,18 +201,9 @@ add_recommendation_test(
     tests/weekly_planner_test.cpp
 )
 
-add_executable(health_calculator_test
+add_recommendation_test(
+    health_calculator_test
     tests/health_calculator_test.cpp
-)
-
-target_link_libraries(health_calculator_test PRIVATE
-    recommendation_core
-    Qt${QT_VERSION_MAJOR}::Core
-)
-
-add_test(
-    NAME health_calculator_test
-    COMMAND health_calculator_test
 )
 
 add_executable(sqlite_repository_test

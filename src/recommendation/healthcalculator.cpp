@@ -22,8 +22,8 @@ double activityFactor(int activityLevel)
 QString bmiEvaluation(double bmi)
 {
     if (bmi < 18.5) return QStringLiteral("Underweight");
-    if (bmi < 25.0) return QStringLiteral("Normal weight");
-    if (bmi < 30.0) return QStringLiteral("Overweight");
+    if (bmi < 24.0) return QStringLiteral("Normal weight");
+    if (bmi < 28.0) return QStringLiteral("Overweight");
     return QStringLiteral("Obesity");
 }
 
@@ -106,6 +106,22 @@ ServiceResult<CalorieNeed> HealthCalculator::calculate(
     if (need.recommendedIntake < need.bmr) {
         warnings.append(QStringLiteral(
             "The estimated intake is below BMR and should be reviewed."));
+    }
+    if (user.goalType == GoalType::Lose && need.bmi < 18.5) {
+        warnings.append(QStringLiteral(
+            "BMI is below 18.5; an automatic weight-loss plan is not recommended."));
+    } else if (user.goalType == GoalType::Lose && need.bmi < 24.0) {
+        warnings.append(QStringLiteral(
+            "BMI is in the normal range; review whether further weight loss is appropriate."));
+    }
+
+    if (user.goalType == GoalType::Lose && user.targetWeightKg > 0.0) {
+        const double targetBmi =
+            user.targetWeightKg / (heightMeters * heightMeters);
+        if (targetBmi < 18.5) {
+            warnings.append(QStringLiteral(
+                "The target weight would result in a BMI below 18.5."));
+        }
     }
 
     return ServiceResult<CalorieNeed>::success(need, {}, warnings);

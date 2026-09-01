@@ -58,6 +58,36 @@ QStringList stringListFromArray(const QJsonArray& array)
     return values;
 }
 
+QJsonObject nutritionFactsToObject(const NutritionFacts& value)
+{
+    QJsonObject object;
+    object.insert(QStringLiteral("caloriesKcal"), value.caloriesKcal);
+    object.insert(QStringLiteral("proteinG"), value.proteinG);
+    object.insert(QStringLiteral("carbohydrateG"), value.carbohydrateG);
+    object.insert(QStringLiteral("fatG"), value.fatG);
+    object.insert(QStringLiteral("saturatedFatG"), value.saturatedFatG);
+    object.insert(QStringLiteral("fiberG"), value.fiberG);
+    object.insert(QStringLiteral("sugarG"), value.sugarG);
+    object.insert(QStringLiteral("sodiumMg"), value.sodiumMg);
+    object.insert(QStringLiteral("cholesterolMg"), value.cholesterolMg);
+    return object;
+}
+
+NutritionFacts nutritionFactsFromObject(const QJsonObject& object)
+{
+    NutritionFacts value;
+    value.caloriesKcal = object.value(QStringLiteral("caloriesKcal")).toDouble();
+    value.proteinG = object.value(QStringLiteral("proteinG")).toDouble();
+    value.carbohydrateG = object.value(QStringLiteral("carbohydrateG")).toDouble();
+    value.fatG = object.value(QStringLiteral("fatG")).toDouble();
+    value.saturatedFatG = object.value(QStringLiteral("saturatedFatG")).toDouble();
+    value.fiberG = object.value(QStringLiteral("fiberG")).toDouble();
+    value.sugarG = object.value(QStringLiteral("sugarG")).toDouble();
+    value.sodiumMg = object.value(QStringLiteral("sodiumMg")).toDouble();
+    value.cholesterolMg = object.value(QStringLiteral("cholesterolMg")).toDouble();
+    return value;
+}
+
 QJsonObject calorieNeedToObject(const CalorieNeed& value)
 {
     QJsonObject object;
@@ -115,6 +145,7 @@ QJsonObject mealPlanItemToObject(const MealPlanItem& value)
     object.insert(QStringLiteral("ingredients"), ingredientsToArray(value.ingredients));
     object.insert(QStringLiteral("nutritionTags"), stringListToArray(value.nutritionTags));
     object.insert(QStringLiteral("calories"), value.calories);
+    object.insert(QStringLiteral("nutrition"), nutritionFactsToObject(value.nutrition));
     return object;
 }
 
@@ -131,6 +162,8 @@ MealPlanItem mealPlanItemFromObject(const QJsonObject& object)
     value.nutritionTags = stringListFromArray(
         object.value(QStringLiteral("nutritionTags")).toArray());
     value.calories = object.value(QStringLiteral("calories")).toDouble();
+    value.nutrition = nutritionFactsFromObject(
+        object.value(QStringLiteral("nutrition")).toObject());
     return value;
 }
 
@@ -182,6 +215,8 @@ QJsonObject mealPlanToObject(const MealPlan& value)
     object.insert(QStringLiteral("dinner"), mealItemsToArray(value.dinner));
     object.insert(QStringLiteral("snacks"), mealItemsToArray(value.snacks));
     object.insert(QStringLiteral("totalCalories"), value.totalCalories);
+    object.insert(QStringLiteral("totalNutrition"),
+                  nutritionFactsToObject(value.totalNutrition));
     return object;
 }
 
@@ -193,6 +228,8 @@ MealPlan mealPlanFromObject(const QJsonObject& object)
     value.dinner = mealItemsFromArray(object.value(QStringLiteral("dinner")).toArray());
     value.snacks = mealItemsFromArray(object.value(QStringLiteral("snacks")).toArray());
     value.totalCalories = object.value(QStringLiteral("totalCalories")).toDouble();
+    value.totalNutrition = nutritionFactsFromObject(
+        object.value(QStringLiteral("totalNutrition")).toObject());
     return value;
 }
 
@@ -252,19 +289,9 @@ QVector<Ingredient> ingredientsFromJson(const QString& json)
 }
 QString nutritionFactsToJson(const NutritionFacts& nutrition)
 {
-    QJsonObject object;
-    object.insert(QStringLiteral("caloriesKcal"), nutrition.caloriesKcal);
-    object.insert(QStringLiteral("proteinG"), nutrition.proteinG);
-    object.insert(QStringLiteral("carbohydrateG"), nutrition.carbohydrateG);
-    object.insert(QStringLiteral("fatG"), nutrition.fatG);
-    object.insert(QStringLiteral("saturatedFatG"), nutrition.saturatedFatG);
-    object.insert(QStringLiteral("fiberG"), nutrition.fiberG);
-    object.insert(QStringLiteral("sugarG"), nutrition.sugarG);
-    object.insert(QStringLiteral("sodiumMg"), nutrition.sodiumMg);
-    object.insert(QStringLiteral("cholesterolMg"), nutrition.cholesterolMg);
-
     return QString::fromUtf8(
-        QJsonDocument(object).toJson(QJsonDocument::Compact));
+        QJsonDocument(nutritionFactsToObject(nutrition))
+            .toJson(QJsonDocument::Compact));
 }
 
 NutritionFacts nutritionFactsFromJson(const QString& json)
@@ -280,27 +307,7 @@ NutritionFacts nutritionFactsFromJson(const QString& json)
         return nutrition;
     }
 
-    const QJsonObject object = document.object();
-    nutrition.caloriesKcal =
-        object.value(QStringLiteral("caloriesKcal")).toDouble();
-    nutrition.proteinG =
-        object.value(QStringLiteral("proteinG")).toDouble();
-    nutrition.carbohydrateG =
-        object.value(QStringLiteral("carbohydrateG")).toDouble();
-    nutrition.fatG =
-        object.value(QStringLiteral("fatG")).toDouble();
-    nutrition.saturatedFatG =
-        object.value(QStringLiteral("saturatedFatG")).toDouble();
-    nutrition.fiberG =
-        object.value(QStringLiteral("fiberG")).toDouble();
-    nutrition.sugarG =
-        object.value(QStringLiteral("sugarG")).toDouble();
-    nutrition.sodiumMg =
-        object.value(QStringLiteral("sodiumMg")).toDouble();
-    nutrition.cholesterolMg =
-        object.value(QStringLiteral("cholesterolMg")).toDouble();
-
-    return nutrition;
+    return nutritionFactsFromObject(document.object());
 }
 
 QString weeklyPlanToJson(const WeeklyPlan& plan)
