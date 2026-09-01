@@ -289,6 +289,59 @@ int main()
         }
     }
 
+    QVector<Exercise> weeklyExercises;
+    QVector<Recipe> weeklyRecipes;
+    for (int index = 0; index < 21; ++index) {
+        Exercise weeklyExercise = exercise;
+        weeklyExercise.id = QStringLiteral("weekly-exercise-%1").arg(index);
+        weeklyExercise.name = QStringLiteral("周运动 %1").arg(index);
+        weeklyExercise.metValue = 4.0 + (index % 7) * 0.1;
+        weeklyExercises.append(weeklyExercise);
+    }
+    for (int index = 0; index < 7; ++index) {
+        Recipe weeklyBreakfast = recipe;
+        weeklyBreakfast.id = QStringLiteral("weekly-breakfast-%1").arg(index);
+        weeklyBreakfast.totalCalories = 540.0 + index;
+        weeklyRecipes.append(weeklyBreakfast);
+
+        Recipe weeklyLunch = lunchRecipe;
+        weeklyLunch.id = QStringLiteral("weekly-lunch-%1").arg(index);
+        weeklyLunch.totalCalories = 720.0 + index;
+        weeklyRecipes.append(weeklyLunch);
+
+        Recipe weeklyDinner = dinnerRecipe;
+        weeklyDinner.id = QStringLiteral("weekly-dinner-%1").arg(index);
+        weeklyDinner.totalCalories = 540.0 + index;
+        weeklyRecipes.append(weeklyDinner);
+    }
+
+    const auto weeklyDiversityResult = planner.generate(
+        user,
+        calorieNeed,
+        validStartDate,
+        weeklyExercises,
+        weeklyRecipes,
+        fixedTargetOptions);
+    if (!weeklyDiversityResult.ok
+        || !weeklyDiversityResult.warnings.isEmpty()) {
+        return 26;
+    }
+
+    QSet<QString> usedWeeklyExercises;
+    QSet<QString> usedWeeklyBreakfasts;
+    QSet<QString> usedWeeklyLunches;
+    QSet<QString> usedWeeklyDinners;
+    for (const DailyPlan& day : weeklyDiversityResult.data.days) {
+        usedWeeklyExercises.insert(day.exercises.first().exerciseId);
+        usedWeeklyBreakfasts.insert(day.meals.breakfast.first().recipeId);
+        usedWeeklyLunches.insert(day.meals.lunch.first().recipeId);
+        usedWeeklyDinners.insert(day.meals.dinner.first().recipeId);
+    }
+    if (usedWeeklyExercises.size() != 7) return 36;
+    if (usedWeeklyBreakfasts.size() != 7) return 37;
+    if (usedWeeklyLunches.size() != 7) return 38;
+    if (usedWeeklyDinners.size() != 7) return 39;
+
     WeeklyPlanOptions duplicatesAllowed = fixedTargetOptions;
     duplicatesAllowed.avoidConsecutiveDuplicateExercises = false;
     duplicatesAllowed.avoidConsecutiveDuplicateRecipes = false;

@@ -43,7 +43,7 @@ private:
     QDoubleSpinBox* heightSpin_ = nullptr;
     QDoubleSpinBox* weightSpin_ = nullptr;
     QDoubleSpinBox* targetWeightSpin_ = nullptr;
-    QComboBox* activityCombo_ = nullptr;
+    QSpinBox* averageDailyStepsSpin_ = nullptr;
     QDoubleSpinBox* weeklyGoalSpin_ = nullptr;
     QSpinBox* dietRatioSpin_ = nullptr;
     QPushButton* calculateButton_ = nullptr;

@@ -1,0 +1,6 @@
+<RCC>
+    <qresource prefix="/datasets">
+        <file alias="exercises.csv">../datasets/builtin/exercises_zh.csv</file>
+        <file alias="recipes.csv">../datasets/builtin/recipes_all_zh.csv</file>
+    </qresource>
+</RCC>

@@ -14,6 +14,10 @@ public:
     ServiceResult<ImportBatch<Recipe>> importRecipes(
         const QString& filePath,
         DataFormat format) const override;
+    ServiceResult<ImportStreamSummary> streamRecipes(
+        const QString& filePath,
+        DataFormat format,
+        const std::function<void(const Recipe&)>& visitor) const override;
 
     ServiceResult<bool> exportUsers(
         const QVector<UserProfile>& users,

@@ -186,7 +186,7 @@ QVector<Recipe> filterEligibleRecipes(
     for (const QString& id : options.excludedRecipeIds) {
         excludedIds.insert(id.trimmed());
     }
-
+//只能够exclude吗？
     QVector<Recipe> eligibleRecipes;
     eligibleRecipes.reserve(recipeDatabase.size());
     QSet<QString> acceptedIds;

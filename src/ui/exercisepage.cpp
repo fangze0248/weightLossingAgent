@@ -35,12 +35,21 @@ ExercisePage::ExercisePage(IDataExchangeService& dataExchangeService,
 
     exerciseTable_ = new QTableWidget(0, 3, this);
     exerciseTable_->setHorizontalHeaderLabels({
-        QStringLiteral("编号"),
         QStringLiteral("运动名称"),
+        QStringLiteral("运动描述"),
          QStringLiteral("MET值")}
         );
 
-    exerciseTable_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    exerciseTable_->horizontalHeader()->setSectionResizeMode(
+        0, QHeaderView::ResizeToContents);
+
+    exerciseTable_->horizontalHeader()->setSectionResizeMode(
+        1, QHeaderView::Stretch);
+
+    exerciseTable_->horizontalHeader()->setSectionResizeMode(
+        2, QHeaderView::ResizeToContents);
+
+    exerciseTable_->setWordWrap(true);
     exerciseTable_->setAlternatingRowColors(true);
     exerciseTable_->verticalHeader()->setVisible(false);
     idEdit_ = new QLineEdit(this);
@@ -70,9 +79,9 @@ ExercisePage::ExercisePage(IDataExchangeService& dataExchangeService,
     formLayout->setHorizontalSpacing(18);
     formLayout->setVerticalSpacing(10);
     formLayout->addRow(
-        QStringLiteral("运动编号："), idEdit_);
+        QStringLiteral("运动名称："), idEdit_);
     formLayout->addRow(
-        QStringLiteral("运动名称："), nameEdit_);
+        QStringLiteral("运动描述："), nameEdit_);
     formLayout->addRow(
         QStringLiteral("MET值："), metEdit_);
     auto* buttonLayout = new QHBoxLayout;
@@ -183,10 +192,11 @@ void ExercisePage::refreshTable()
     exerciseTable_->setRowCount(result.data.size());
     for (qsizetype row = 0; row < result.data.size(); ++row) {
         const Exercise& exercise = result.data.at(row);
+        auto* nameItem=new QTableWidgetItem(exercise.name);
+        nameItem->setData(Qt::UserRole,exercise.id);
+        exerciseTable_->setItem(row, 0, nameItem);
         exerciseTable_->setItem(
-            row, 0, new QTableWidgetItem(exercise.id));
-        exerciseTable_->setItem(
-            row, 1, new QTableWidgetItem(exercise.name));
+            row, 1, new QTableWidgetItem(exercise.description));
         exerciseTable_->setItem(
             row, 2, new QTableWidgetItem(
                         QString::number(exercise.metValue, 'f', 1)));
@@ -271,8 +281,9 @@ void ExercisePage::deleteSelectedExercise()
         return;
     }
 
-    const QString id = exerciseTable_->item(row, 0)->text();
-    const QString name = exerciseTable_->item(row, 1)->text();
+    QTableWidgetItem* nameItem=exerciseTable_->item(row,0);
+    const QString id = nameItem->data(Qt::UserRole).toString();
+    const QString name = nameItem->text();
     if (QMessageBox::question(
             this,
             QStringLiteral("确认删除"),

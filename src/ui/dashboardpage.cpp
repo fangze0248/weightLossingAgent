@@ -368,19 +368,20 @@ void DashboardPage::updateProfilePanel(const UserProfile& user,
     avatarLabel_->setText(displayName.left(1));
     nameLabel_->setText(displayName);
     basicInfoLabel_->setText(
-        QStringLiteral("%1 · %2 岁 · %3 cm\n当前体重 %4 kg")
+        QStringLiteral("%1 · %2 岁 · %3 cm\n当前体重 %4 kg · 日均 %5 步")
             .arg(user.gender == Gender::Male
                      ? QStringLiteral("男")
                      : QStringLiteral("女"))
             .arg(user.age)
             .arg(user.heightCm, 0, 'f', 1)
-            .arg(user.weightKg, 0, 'f', 1));
+            .arg(user.weightKg, 0, 'f', 1)
+            .arg(user.averageDailySteps));
     bmiValueLabel_->setText(
         QStringLiteral("%1  %2")
             .arg(calorieNeed.bmi, 0, 'f', 1)
             .arg(calorieNeed.bmiEvaluation));
     metabolismLabel_->setText(
-        QStringLiteral("🔥 能量代谢\n基础代谢　%1 kcal\n每日总消耗　%2 kcal")
+        QStringLiteral("🔥 能量代谢\n基础代谢　%1 kcal\n基础生活总消耗　%2 kcal")
             .arg(calorieNeed.bmr, 0, 'f', 0)
             .arg(calorieNeed.tdee, 0, 'f', 0));
     goalLabel_->setText(

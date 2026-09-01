@@ -12,8 +12,19 @@ struct RecipeFilter {
     QString keyword;
     std::optional<MealType> mealType;
     QStringList requiredNutritionTags;
+    QStringList excludedIds;
     std::optional<double> minimumCalories;
     std::optional<double> maximumCalories;
+    std::optional<double> minimumProteinG;
+    std::optional<double> maximumProteinG;
+    std::optional<double> minimumCarbohydrateG;
+    std::optional<double> maximumCarbohydrateG;
+    std::optional<double> minimumFatG;
+    std::optional<double> maximumFatG;
+    std::optional<double> minimumFiberG;
+    std::optional<double> maximumSodiumMg;
+    std::optional<double> targetCalories;
+    int limit = 0;
 };
 
 class IRecipeRepository {

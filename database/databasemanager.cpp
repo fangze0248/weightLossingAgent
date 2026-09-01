@@ -1,9 +1,12 @@
 #include "database/databasemanager.h"
 
+#include "database/modeljsoncodec.h"
+
 #include <QDir>
 #include <QFileInfo>
 #include <QSqlError>
 #include <QSqlQuery>
+#include <QSet>
 #include <QStandardPaths>
 #include <QStringList>
 #include <utility>
@@ -110,21 +113,14 @@ bool DatabaseManager::ensureRecipeNutritionColumns(
         return false;
     }
 
-    bool hasNutritionJson = false;
-    bool hasServings = false;
+    QSet<QString> existingColumns;
 
     while (query.next()) {
         // PRAGMA table_info 返回结果的第1列是字段名称
-        const QString columnName = query.value(1).toString();
-
-        if (columnName == QStringLiteral("nutrition_json")) {
-            hasNutritionJson = true;
-        } else if (columnName == QStringLiteral("servings")) {
-            hasServings = true;
-        }
+        existingColumns.insert(query.value(1).toString());
     }
 
-    if (!hasNutritionJson) {
+    if (!existingColumns.contains(QStringLiteral("nutrition_json"))) {
         if (!executeStatement(
                 QStringLiteral(
                     "ALTER TABLE recipes "
@@ -135,7 +131,7 @@ bool DatabaseManager::ensureRecipeNutritionColumns(
         }
     }
 
-    if (!hasServings) {
+    if (!existingColumns.contains(QStringLiteral("servings"))) {
         if (!executeStatement(
                 QStringLiteral(
                     "ALTER TABLE recipes "
@@ -146,8 +142,120 @@ bool DatabaseManager::ensureRecipeNutritionColumns(
         }
     }
 
+    const QVector<QPair<QString, QString>> searchColumns = {
+        {QStringLiteral("protein_g"),
+         QStringLiteral("REAL NOT NULL DEFAULT 0 CHECK(protein_g >= 0)")},
+        {QStringLiteral("carbohydrate_g"),
+         QStringLiteral("REAL NOT NULL DEFAULT 0 CHECK(carbohydrate_g >= 0)")},
+        {QStringLiteral("fat_g"),
+         QStringLiteral("REAL NOT NULL DEFAULT 0 CHECK(fat_g >= 0)")},
+        {QStringLiteral("saturated_fat_g"),
+         QStringLiteral("REAL NOT NULL DEFAULT 0 CHECK(saturated_fat_g >= 0)")},
+        {QStringLiteral("fiber_g"),
+         QStringLiteral("REAL NOT NULL DEFAULT 0 CHECK(fiber_g >= 0)")},
+        {QStringLiteral("sugar_g"),
+         QStringLiteral("REAL NOT NULL DEFAULT 0 CHECK(sugar_g >= 0)")},
+        {QStringLiteral("sodium_mg"),
+         QStringLiteral("REAL NOT NULL DEFAULT 0 CHECK(sodium_mg >= 0)")},
+        {QStringLiteral("cholesterol_mg"),
+         QStringLiteral("REAL NOT NULL DEFAULT 0 CHECK(cholesterol_mg >= 0)")}
+    };
+
+    bool addedSearchColumn = false;
+    for (const auto& searchColumn : searchColumns) {
+        if (existingColumns.contains(searchColumn.first)) continue;
+        if (!executeStatement(
+                QStringLiteral("ALTER TABLE recipes ADD COLUMN %1 %2")
+                    .arg(searchColumn.first, searchColumn.second),
+                errorMessage)) {
+            return false;
+        }
+        addedSearchColumn = true;
+    }
+
+    // Older databases stored nutrients only as JSON. Backfill the new numeric
+    // columns once so range queries can use indexes instead of parsing JSON.
+    if (addedSearchColumn) {
+        struct NutritionBackfill {
+            QString id;
+            NutritionFacts nutrition;
+        };
+        QVector<NutritionBackfill> rows;
+        QSqlQuery select(database_);
+        if (!select.exec(QStringLiteral(
+                "SELECT id, total_calories, nutrition_json FROM recipes"))) {
+            if (errorMessage) *errorMessage = select.lastError().text();
+            return false;
+        }
+        while (select.next()) {
+            NutritionFacts nutrition =
+                model_json_codec::nutritionFactsFromJson(
+                    select.value(2).toString());
+            if (nutrition.caloriesKcal <= 0.0) {
+                nutrition.caloriesKcal = select.value(1).toDouble();
+            }
+            rows.append({select.value(0).toString(), nutrition});
+        }
+
+        QSqlQuery update(database_);
+        update.prepare(QStringLiteral(
+            "UPDATE recipes SET protein_g = :protein, "
+            "carbohydrate_g = :carbohydrate, fat_g = :fat, "
+            "saturated_fat_g = :saturated_fat, fiber_g = :fiber, "
+            "sugar_g = :sugar, sodium_mg = :sodium, "
+            "cholesterol_mg = :cholesterol WHERE id = :id"));
+        for (const NutritionBackfill& row : rows) {
+            update.bindValue(QStringLiteral(":id"), row.id);
+            update.bindValue(QStringLiteral(":protein"), row.nutrition.proteinG);
+            update.bindValue(
+                QStringLiteral(":carbohydrate"),
+                row.nutrition.carbohydrateG);
+            update.bindValue(QStringLiteral(":fat"), row.nutrition.fatG);
+            update.bindValue(
+                QStringLiteral(":saturated_fat"),
+                row.nutrition.saturatedFatG);
+            update.bindValue(QStringLiteral(":fiber"), row.nutrition.fiberG);
+            update.bindValue(QStringLiteral(":sugar"), row.nutrition.sugarG);
+            update.bindValue(QStringLiteral(":sodium"), row.nutrition.sodiumMg);
+            update.bindValue(
+                QStringLiteral(":cholesterol"),
+                row.nutrition.cholesterolMg);
+            if (!update.exec()) {
+                if (errorMessage) *errorMessage = update.lastError().text();
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+bool DatabaseManager::ensureUserAverageDailyStepsColumn(
+    QString* errorMessage)
+{
+    QSqlQuery query(database_);
+    if (!query.exec(QStringLiteral("PRAGMA table_info(users)"))) {
+        if (errorMessage) *errorMessage = query.lastError().text();
+        return false;
+    }
+
+    bool columnExists = false;
+    while (query.next()) {
+        if (query.value(1).toString()
+            == QStringLiteral("average_daily_steps")) {
+            columnExists = true;
+            break;
+        }
+    }
+    if (columnExists) return true;
+
+    // Existing users receive a conservative baseline and can replace it in
+    // the profile UI with their actual past-seven-day average.
     return executeStatement(
-        QStringLiteral("PRAGMA user_version = 2"),
+        QStringLiteral(
+            "ALTER TABLE users ADD COLUMN average_daily_steps "
+            "INTEGER NOT NULL DEFAULT 4000 "
+            "CHECK(average_daily_steps BETWEEN 0 AND 50000)"),
         errorMessage);
 }
 
@@ -170,6 +278,8 @@ bool DatabaseManager::initialize(QString* errorMessage)
                 height_cm REAL NOT NULL CHECK(height_cm > 0),
                 weight_kg REAL NOT NULL CHECK(weight_kg > 0),
                 target_weight_kg REAL NOT NULL CHECK(target_weight_kg > 0),
+                average_daily_steps INTEGER NOT NULL DEFAULT 4000
+                CHECK(average_daily_steps BETWEEN 0 AND 50000),
                 activity_level INTEGER NOT NULL CHECK(activity_level BETWEEN 1 AND 5),
                 goal_type TEXT NOT NULL CHECK(goal_type IN ('lose', 'maintain', 'gain')),
                 weekly_goal_kg REAL NOT NULL DEFAULT 0.5,
@@ -198,6 +308,17 @@ bool DatabaseManager::initialize(QString* errorMessage)
                 nutrition_json TEXT NOT NULL DEFAULT '{}',
                 servings INTEGER NOT NULL DEFAULT 1
                 CHECK(servings > 0),
+                protein_g REAL NOT NULL DEFAULT 0 CHECK(protein_g >= 0),
+                carbohydrate_g REAL NOT NULL DEFAULT 0
+                CHECK(carbohydrate_g >= 0),
+                fat_g REAL NOT NULL DEFAULT 0 CHECK(fat_g >= 0),
+                saturated_fat_g REAL NOT NULL DEFAULT 0
+                CHECK(saturated_fat_g >= 0),
+                fiber_g REAL NOT NULL DEFAULT 0 CHECK(fiber_g >= 0),
+                sugar_g REAL NOT NULL DEFAULT 0 CHECK(sugar_g >= 0),
+                sodium_mg REAL NOT NULL DEFAULT 0 CHECK(sodium_mg >= 0),
+                cholesterol_mg REAL NOT NULL DEFAULT 0
+                CHECK(cholesterol_mg >= 0),
                 meal_type TEXT NOT NULL,
                 nutrition_tags_json TEXT NOT NULL DEFAULT '[]'
             )
@@ -226,6 +347,14 @@ bool DatabaseManager::initialize(QString* errorMessage)
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         )SQL"),
+        QStringLiteral(R"SQL(
+            CREATE TABLE IF NOT EXISTS dataset_imports (
+                dataset_key TEXT PRIMARY KEY,
+                content_hash TEXT NOT NULL,
+                imported_at TEXT NOT NULL,
+                imported_rows INTEGER NOT NULL CHECK(imported_rows >= 0)
+            )
+        )SQL"),
         QStringLiteral("CREATE INDEX IF NOT EXISTS idx_weekly_plans_user "
                        "ON weekly_plans(user_id, start_date)"),
         QStringLiteral("CREATE INDEX IF NOT EXISTS idx_feedback_user "
@@ -240,7 +369,28 @@ bool DatabaseManager::initialize(QString* errorMessage)
     if (!ensureRecipeNutritionColumns(errorMessage)) {
         return false;
     }
-    return true;
+    if (!ensureUserAverageDailyStepsColumn(errorMessage)) {
+        return false;
+    }
+    const QStringList searchIndexes = {
+        QStringLiteral(
+            "CREATE INDEX IF NOT EXISTS idx_recipes_meal_calories "
+            "ON recipes(meal_type, total_calories)"),
+        QStringLiteral(
+            "CREATE INDEX IF NOT EXISTS idx_recipes_nutrition "
+            "ON recipes(protein_g, fiber_g, sodium_mg)"),
+        QStringLiteral(
+            "CREATE INDEX IF NOT EXISTS idx_exercises_category_met "
+            "ON exercises(category, met_value)"),
+        QStringLiteral(
+            "CREATE INDEX IF NOT EXISTS idx_exercises_met "
+            "ON exercises(met_value)")
+    };
+    for (const QString& statement : searchIndexes) {
+        if (!executeStatement(statement, errorMessage)) return false;
+    }
+    return executeStatement(QStringLiteral("PRAGMA user_version = 5"),
+                            errorMessage);
 }
 
 
@@ -255,11 +405,11 @@ bool DatabaseManager::seedDemoData(QString* errorMessage)
         QStringLiteral(R"SQL(
             INSERT OR IGNORE INTO users (
                 id, name, gender, age, height_cm, weight_kg,
-                target_weight_kg, activity_level, goal_type,
+                target_weight_kg, average_daily_steps, activity_level, goal_type,
                 weekly_goal_kg, diet_contribution_ratio
             ) VALUES (
                 'U001', 'Demo User', 'M', 25, 175, 80,
-                70, 3, 'lose', 0.5, 0.7
+                70, 4000, 3, 'lose', 0.5, 0.7
             )
         )SQL"),
         QStringLiteral(R"SQL(

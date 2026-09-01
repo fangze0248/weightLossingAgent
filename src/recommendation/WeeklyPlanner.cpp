@@ -197,6 +197,32 @@ WeeklyPlanOptions optionsAvoidingPreviousDay(
     return dayOptions;
 }
 
+WeeklyPlanOptions optionsAvoidingGeneratedDays(
+    const WeeklyPlanOptions& baseOptions,
+    const QVector<DailyPlan>& generatedDays,
+    bool avoidExercises,
+    bool avoidRecipes)
+{
+    WeeklyPlanOptions dayOptions = baseOptions;
+
+    for (const DailyPlan& day : generatedDays) {
+        if (avoidExercises) {
+            for (const QString& id : exerciseIdsOf(day)) {
+                appendUniqueId(
+                    dayOptions.exerciseOptions.excludedExerciseIds, id);
+            }
+        }
+        if (avoidRecipes) {
+            for (const QString& id : recipeIdsOf(day)) {
+                appendUniqueId(
+                    dayOptions.mealOptions.excludedRecipeIds, id);
+            }
+        }
+    }
+
+    return dayOptions;
+}
+
 } // namespace
 
 ServiceResult<WeeklyPlan> WeeklyPlanner::generate(
@@ -312,9 +338,11 @@ ServiceResult<WeeklyPlan> WeeklyPlanner::generate(
             dayIndex);
         WeeklyPlanOptions dayOptions = baseDayOptions;
         if (dayIndex > 0) {
-            dayOptions = optionsAvoidingPreviousDay(
+            // Prefer an item that has not appeared anywhere earlier in this
+            // week. This prevents the former A-B-A-B alternation.
+            dayOptions = optionsAvoidingGeneratedDays(
                 baseDayOptions,
-                weeklyPlan.days.last(),
+                weeklyPlan.days,
                 options.avoidConsecutiveDuplicateExercises,
                 options.avoidConsecutiveDuplicateRecipes);
         }
@@ -326,6 +354,27 @@ ServiceResult<WeeklyPlan> WeeklyPlanner::generate(
             exerciseDatabase,
             recipeDatabase,
             dayOptions);
+
+        // A very small candidate set may not support seven globally unique
+        // days. In that case preserve the original contract: at minimum,
+        // avoid repeating the immediately preceding day.
+        if (!dayResult.ok && dayIndex > 0
+            && (options.avoidConsecutiveDuplicateExercises
+                || options.avoidConsecutiveDuplicateRecipes)) {
+            const WeeklyPlanOptions previousDayOptions =
+                optionsAvoidingPreviousDay(
+                    baseDayOptions,
+                    weeklyPlan.days.last(),
+                    options.avoidConsecutiveDuplicateExercises,
+                    options.avoidConsecutiveDuplicateRecipes);
+            dayResult = generateDailyPlan(
+                user,
+                dayCalorieNeed,
+                date,
+                exerciseDatabase,
+                recipeDatabase,
+                previousDayOptions);
+        }
 
         // 两种去重同时启用但无法同时满足时，先分别尝试保留其中一种，
         // 避免某一类候选不足时把另一类本可满足的去重也放弃。

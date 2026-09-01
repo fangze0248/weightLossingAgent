@@ -13,6 +13,12 @@ struct UserProfile {
     double heightCm = 0.0;
     double weightKg = 0.0;
     double targetWeightKg = 0.0;
+    // Past-seven-day average. It is used only to estimate ordinary daily
+    // movement; planned workouts are calculated separately.
+    int averageDailySteps = 4000;
+
+    // Kept temporarily so existing SQLite databases remain compatible.
+    // HealthCalculator no longer uses this value.
     int activityLevel = 1;
     GoalType goalType = GoalType::Lose;
     ExerciseGoal exerciseGoal = ExerciseGoal::LightHealth;

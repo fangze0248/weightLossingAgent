@@ -69,13 +69,13 @@ HealthPage::HealthPage(IHealthCalculator& calculator,
     targetWeightSpin_->setDecimals(1);
     targetWeightSpin_->setSuffix(QStringLiteral(" kg"));
 
-    activityCombo_ = new QComboBox(this);
-    activityCombo_->addItem(QStringLiteral("1 - 久坐"), 1);
-    activityCombo_->addItem(QStringLiteral("2 - 轻度活动"), 2);
-    activityCombo_->addItem(QStringLiteral("3 - 中度活动"), 3);
-    activityCombo_->addItem(QStringLiteral("4 - 高度活动"), 4);
-    activityCombo_->addItem(QStringLiteral("5 - 非常活跃"), 5);
-    activityCombo_->setCurrentIndex(2);
+    averageDailyStepsSpin_ = new QSpinBox(this);
+    averageDailyStepsSpin_->setRange(0, 50000);
+    averageDailyStepsSpin_->setSingleStep(500);
+    averageDailyStepsSpin_->setValue(4000);
+    averageDailyStepsSpin_->setSuffix(QStringLiteral(" 步/天"));
+    averageDailyStepsSpin_->setToolTip(QStringLiteral(
+        "请输入过去 7 天的日均步数；健身等专项锻炼由运动处方另外安排。"));
 
     weeklyGoalSpin_ = new QDoubleSpinBox(this);
     weeklyGoalSpin_->setRange(0.1, 1.5);
@@ -116,7 +116,8 @@ HealthPage::HealthPage(IHealthCalculator& calculator,
     formLayout->addRow(QStringLiteral("身高："), heightSpin_);
     formLayout->addRow(QStringLiteral("体重："), weightSpin_);
     formLayout->addRow(QStringLiteral("目标体重："), targetWeightSpin_);
-    formLayout->addRow(QStringLiteral("活动等级："), activityCombo_);
+    formLayout->addRow(QStringLiteral("过去7天日均步数："),
+                       averageDailyStepsSpin_);
     formLayout->addRow(QStringLiteral("每周减重目标："), weeklyGoalSpin_);
     formLayout->addRow(QStringLiteral("饮食贡献比例："), dietRatioSpin_);
 
@@ -169,7 +170,7 @@ UserProfile HealthPage::buildUserProfile() const
     user.heightCm = heightSpin_->value();
     user.weightKg = weightSpin_->value();
     user.targetWeightKg = targetWeightSpin_->value();
-    user.activityLevel = activityCombo_->currentData().toInt();
+    user.averageDailySteps = averageDailyStepsSpin_->value();
     user.goalType = GoalType::Lose;
     user.weeklyGoalKg = weeklyGoalSpin_->value();
     user.dietContributionRatio = dietRatioSpin_->value() / 100.0;
@@ -190,8 +191,7 @@ void HealthPage::applyUserProfile(const UserProfile& user)
     weightSpin_->setValue(user.weightKg);
     targetWeightSpin_->setValue(user.targetWeightKg);
 
-    const int activityIndex = activityCombo_->findData(user.activityLevel);
-    if (activityIndex >= 0) activityCombo_->setCurrentIndex(activityIndex);
+    averageDailyStepsSpin_->setValue(user.averageDailySteps);
 
     weeklyGoalSpin_->setValue(user.weeklyGoalKg);
     dietRatioSpin_->setValue(
@@ -268,14 +268,16 @@ void HealthPage::calculateHealth()
     QString text = QStringLiteral(
                        "BMI：%1（%2）\n"
                        "BMR：%3 kcal/天\n"
-                       "TDEE：%4 kcal/天\n"
-                       "每日热量缺口：%5 kcal\n"
-                       "建议摄入：%6 kcal/天\n"
-                       "运动消耗目标：%7 kcal/天")
+                       "基础生活总消耗：%4 kcal/天\n"
+                       "日均步数：%5 步/天\n"
+                       "每日热量缺口：%6 kcal\n"
+                       "建议摄入：%7 kcal/天\n"
+                       "运动消耗目标：%8 kcal/天")
                        .arg(need.bmi, 0, 'f', 1)
                        .arg(need.bmiEvaluation)
                        .arg(need.bmr, 0, 'f', 0)
                        .arg(need.tdee, 0, 'f', 0)
+                       .arg(user.averageDailySteps)
                        .arg(need.dailyDeficit, 0, 'f', 0)
                        .arg(need.recommendedIntake, 0, 'f', 0)
                        .arg(need.exerciseTarget, 0, 'f', 0);

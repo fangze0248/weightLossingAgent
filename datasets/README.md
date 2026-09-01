@@ -20,6 +20,35 @@
 
 常见别名也可识别，例如 `activity`、`met`、`mets`、`type`。
 
+## 预处理 2024 Adult Compendium
+
+官方文件可先用 Excel “另存为” UTF-8 CSV。项目会构建
+`compendium_preprocessor` C++ 命令行工具，可直接识别：
+
+- `Major Heading`
+- `Activity Code`
+- `MET Value`
+- `Activity Description`
+
+在项目根目录执行：
+
+```cmd
+build\Desktop_Qt_6_11_2_MinGW_64_bit_Debug\compendium_preprocessor.exe ^
+  --input "D:\datasets\2024-adult-compendium.csv" ^
+  --output "datasets\builtin\exercises.csv" ^
+  --max-per-category 150
+```
+
+工具会自动：
+
+- 将 Compendium 大类和活动描述映射为有氧、力量、柔韧、平衡；
+- 排除静坐、职业、自理等不适合作为运动处方的类别；
+- 默认保留 MET 2.0–18.0 的记录；
+- 在低、中、高三种强度中轮流选取，避免数据只剩一种强度；
+- 使用 `CPA_活动编码` 作为稳定编号，并按编号和“名称 + MET”去重。
+
+输出文件改变后需要重新构建主程序，使 Qt 资源包含新数据。
+
 ## 食谱数据
 
 参考 `templates/recipes_template.csv`。
@@ -68,3 +97,67 @@
 - 为避免大型数据集占用过多内存，错误详情最多保留前 100 条。
 - 导入结束后界面显示有效行数、SQLite 写入数和错误摘要。
 - 原始 CSV 文件不会被修改。
+
+## 预处理 Food.com 完整数据集
+
+项目会构建一个名为 `foodcom_preprocessor` 的 C++ 命令行工具。下载原始
+`recipes.csv` 后，在项目根目录执行：
+
+```cmd
+build\Desktop_Qt_6_11_2_MinGW_64_bit_Debug\foodcom_preprocessor.exe ^
+  --input "D:\datasets\recipes.csv" ^
+  --output "datasets\builtin\recipes.csv" ^
+  --max-per-meal 250
+```
+
+工具会自动：
+
+- 解析 Food.com 原始字段和餐别；
+- 排除热量、食材数量或营养数据不完整的记录；
+- 按蛋白质、纤维、目标热量、饱和脂肪和钠进行基础质量排序；
+- 按名称和编号去重；
+- 每种餐别保留指定数量；
+- 输出项目统一格式的 UTF-8 CSV。
+
+输出文件发生变化后需要重新构建主程序，使 Qt 资源包含新数据。
+
+## 程序首次启动自动导入
+
+`datasets/builtin/exercises.csv` 和 `datasets/builtin/recipes.csv` 都会编译进程序资源。程序启动时计算文件的
+SHA-256 指纹，并在 SQLite 的 `dataset_imports` 表中记录版本：
+
+- 第一次启动：自动新增或更新内置运动与食谱；
+- 文件没有变化：跳过导入；
+- 重新预处理并构建后：检测到指纹变化，再次升级导入；
+- 任意写入失败：事务回滚，不留下半套数据。
+
+## 直接批量写入 SQLite
+
+完整数据集不必编译进 Qt 资源。先用上述预处理工具生成标准
+CSV，关闭正在运行的主程序后执行：
+
+```cmd
+build-codex\dataset_importer.exe ^
+  --recipes "D:\datasets\processed\recipes.csv" ^
+  --exercises "D:\datasets\processed\exercises.csv"
+```
+
+省略 `--database` 时，工具使用与 Qt 主程序相同的 SQLite 文件。
+也可使用 `--database "D:\data\weight_agent.db"` 指定其他数据库。
+
+导入器使用事务和预编译 UPSERT：
+
+- 相同 ID 自动更新，新 ID 自动新增；
+- 文件指纹没有变化时跳过重复导入；
+- 任意一条写入失败时回滚整批数据；
+- 不会删除用户、历史计划或其他已有记录。
+
+## 大范围候选检索
+
+数据库将蛋白质、碳水、脂肪、纤维、糖、钠等营养值同步保存为
+可索引的数值列，不再只保存在 JSON 中。生成计划时：
+
+- 食谱按餐别、目标热量、营养范围和排除 ID 在 SQLite 中查询；
+- 运动按类别、MET 范围、目标 MET 和排除 ID 查询；
+- 每个餐别取最接近目标的 12 条，运动取 24 条；
+- 组合算法只处理精选候选，避免数据量增大后枚举爆炸。

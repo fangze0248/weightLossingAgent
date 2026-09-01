@@ -70,13 +70,13 @@ ProfileDialog::ProfileDialog(IUserRepository& repository,
     targetWeightSpin_->setDecimals(1);
     targetWeightSpin_->setSuffix(QStringLiteral(" kg"));
 
-    activityCombo_ = new QComboBox(this);
-    activityCombo_->addItem(QStringLiteral("1 - 久坐"), 1);
-    activityCombo_->addItem(QStringLiteral("2 - 轻度活动"), 2);
-    activityCombo_->addItem(QStringLiteral("3 - 中度活动"), 3);
-    activityCombo_->addItem(QStringLiteral("4 - 高度活动"), 4);
-    activityCombo_->addItem(QStringLiteral("5 - 非常活跃"), 5);
-    activityCombo_->setCurrentIndex(2);
+    averageDailyStepsSpin_ = new QSpinBox(this);
+    averageDailyStepsSpin_->setRange(0, 50000);
+    averageDailyStepsSpin_->setSingleStep(500);
+    averageDailyStepsSpin_->setValue(4000);
+    averageDailyStepsSpin_->setSuffix(QStringLiteral(" 步/天"));
+    averageDailyStepsSpin_->setToolTip(QStringLiteral(
+        "请输入过去 7 天的日均步数；健身等专项锻炼由运动处方另外安排。"));
 
     weeklyGoalSpin_ = new QDoubleSpinBox(this);
     weeklyGoalSpin_->setRange(0.1, 1.5);
@@ -102,7 +102,8 @@ ProfileDialog::ProfileDialog(IUserRepository& repository,
     formLayout->addRow(QStringLiteral("身高："), heightSpin_);
     formLayout->addRow(QStringLiteral("当前体重："), weightSpin_);
     formLayout->addRow(QStringLiteral("目标体重："), targetWeightSpin_);
-    formLayout->addRow(QStringLiteral("活动等级："), activityCombo_);
+    formLayout->addRow(QStringLiteral("过去7天日均步数："),
+                       averageDailyStepsSpin_);
     formLayout->addRow(QStringLiteral("每周减重目标："), weeklyGoalSpin_);
     formLayout->addRow(QStringLiteral("饮食贡献比例："), dietRatioSpin_);
 
@@ -141,8 +142,7 @@ void ProfileDialog::setUser(const UserProfile& user)
     heightSpin_->setValue(user.heightCm);
     weightSpin_->setValue(user.weightKg);
     targetWeightSpin_->setValue(user.targetWeightKg);
-    const int activityIndex = activityCombo_->findData(user.activityLevel);
-    if (activityIndex >= 0) activityCombo_->setCurrentIndex(activityIndex);
+    averageDailyStepsSpin_->setValue(user.averageDailySteps);
     weeklyGoalSpin_->setValue(user.weeklyGoalKg);
     dietRatioSpin_->setValue(qRound(user.dietContributionRatio * 100.0));
 }
@@ -162,7 +162,7 @@ UserProfile ProfileDialog::buildUser() const
     user.heightCm = heightSpin_->value();
     user.weightKg = weightSpin_->value();
     user.targetWeightKg = targetWeightSpin_->value();
-    user.activityLevel = activityCombo_->currentData().toInt();
+    user.averageDailySteps = averageDailyStepsSpin_->value();
     user.goalType = GoalType::Lose;
     user.weeklyGoalKg = weeklyGoalSpin_->value();
     user.dietContributionRatio = dietRatioSpin_->value() / 100.0;

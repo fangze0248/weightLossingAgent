@@ -143,6 +143,85 @@ ServiceResult<QStringList> readCsvLines(const QString& filePath)
     return ServiceResult<QStringList>::success(lines);
 }
 
+class CsvRecordStream
+{
+public:
+    explicit CsvRecordStream(const QString& filePath)
+        : file_(filePath)
+    {
+    }
+
+    bool open()
+    {
+        return file_.open(QIODevice::ReadOnly);
+    }
+
+    QString errorString() const
+    {
+        return parseError_.isEmpty() ? file_.errorString() : parseError_;
+    }
+
+    bool hasParseError() const
+    {
+        return !parseError_.isEmpty();
+    }
+
+    std::optional<QString> next()
+    {
+        QString record;
+        bool hasContent = false;
+
+        while (!file_.atEnd()) {
+            QByteArray bytes = file_.readLine();
+            if (bytes.endsWith('\n')) bytes.chop(1);
+            if (bytes.endsWith('\r')) bytes.chop(1);
+            const QString line = QString::fromUtf8(bytes);
+
+            if (hasContent) record.append(QLatin1Char('\n'));
+            record.append(line);
+            hasContent = true;
+
+            for (qsizetype index = 0; index < line.size(); ++index) {
+                if (line.at(index) != QLatin1Char('"')) continue;
+                if (insideQuotes_
+                    && index + 1 < line.size()
+                    && line.at(index + 1) == QLatin1Char('"')) {
+                    ++index;
+                } else {
+                    insideQuotes_ = !insideQuotes_;
+                }
+            }
+
+            if (!insideQuotes_) {
+                if (record.trimmed().isEmpty()) {
+                    record.clear();
+                    hasContent = false;
+                    continue;
+                }
+                ++recordNumber_;
+                return record;
+            }
+        }
+
+        if (insideQuotes_) {
+            parseError_ = QStringLiteral(
+                "CSV 文件末尾存在未闭合的英文双引号。");
+        }
+        return std::nullopt;
+    }
+
+    int recordNumber() const
+    {
+        return recordNumber_;
+    }
+
+private:
+    QFile file_;
+    bool insideQuotes_ = false;
+    int recordNumber_ = 0;
+    QString parseError_;
+};
+
 void appendRowMessage(QStringList& messages, const QString& message)
 {
     constexpr qsizetype maximumMessages = 100;
@@ -154,7 +233,8 @@ void appendRowMessage(QStringList& messages, const QString& message)
 }
 
 std::optional<ExerciseCategory> exerciseCategoryFromDataset(
-    const QString& value)
+    const QString& value,
+    const QString& activityDescription = {})
 {
     const QString normalized = value.trimmed().toLower();
     if (normalized.isEmpty()
@@ -180,6 +260,79 @@ std::optional<ExerciseCategory> exerciseCategoryFromDataset(
     if (normalized == QStringLiteral("balance")
         || normalized == QStringLiteral("平衡")) {
         return ExerciseCategory::Balance;
+    }
+
+    const QString description = activityDescription.trimmed().toLower();
+    const auto descriptionContainsAny =
+        [&description](std::initializer_list<const char*> keywords) {
+        for (const char* keyword : keywords) {
+            if (description.contains(QString::fromLatin1(keyword))) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    // The 2024 Compendium uses a major heading instead of the application's
+    // four recommendation categories. Keep the mapping here so both the UI
+    // importer and the offline preprocessor understand the official file.
+    if (normalized == QStringLiteral("conditioning exercises")
+        || normalized == QStringLiteral("conditioning exercise")) {
+        if (descriptionContainsAny({
+                "balance", "tai chi", "balance board"
+            })) {
+            return ExerciseCategory::Balance;
+        }
+        if (descriptionContainsAny({
+                "stretch", "flexibility", "yoga", "pilates"
+            })) {
+            return ExerciseCategory::Flexibility;
+        }
+        if (descriptionContainsAny({
+                "strength", "resistance", "weight lifting", "weight training",
+                "calisthenics", "push-up", "pull-up", "squat"
+            })) {
+            return ExerciseCategory::Strength;
+        }
+        return ExerciseCategory::Aerobic;
+    }
+
+    static const QSet<QString> aerobicCompendiumHeadings = {
+        QStringLiteral("bicycling"),
+        QStringLiteral("dancing"),
+        QStringLiteral("running"),
+        QStringLiteral("sports"),
+        QStringLiteral("walking"),
+        QStringLiteral("water activities"),
+        QStringLiteral("winter activities"),
+        QStringLiteral("video games")
+    };
+    if (aerobicCompendiumHeadings.contains(normalized)) {
+        return ExerciseCategory::Aerobic;
+    }
+
+    // Other official headings (occupation, inactivity, self care and so on)
+    // are parsed as Other. The Compendium preprocessor will intentionally
+    // remove them from the recommendation dataset.
+    static const QSet<QString> otherCompendiumHeadings = {
+        QStringLiteral("fishing & hunting"),
+        QStringLiteral("fishing and hunting"),
+        QStringLiteral("home activities"),
+        QStringLiteral("home repair"),
+        QStringLiteral("inactivity"),
+        QStringLiteral("lawn & garden"),
+        QStringLiteral("lawn and garden"),
+        QStringLiteral("miscellaneous"),
+        QStringLiteral("music playing"),
+        QStringLiteral("occupation"),
+        QStringLiteral("self care"),
+        QStringLiteral("sexual activity"),
+        QStringLiteral("transportation"),
+        QStringLiteral("religious activities"),
+        QStringLiteral("volunteer activities")
+    };
+    if (otherCompendiumHeadings.contains(normalized)) {
+        return ExerciseCategory::Other;
     }
     return std::nullopt;
 }
@@ -564,18 +717,67 @@ ServiceResult<ImportBatch<Exercise>> CsvDataExchangeService::importExercises(
             linesResult.code, linesResult.message);
     }
 
-    const ParsedCsvLine headerLine = parseCsvLine(linesResult.data.first());
-    if (!headerLine.ok) {
-        return ServiceResult<ImportBatch<Exercise>>::failure(
-            QStringLiteral("INVALID_CSV_HEADER"), headerLine.error);
+    // Files exported from the official Compendium workbook may contain a
+    // title row before the actual CSV header. Locate the first record that
+    // exposes both an activity description and a MET column.
+    qsizetype headerRecordIndex = -1;
+    ParsedCsvLine headerLine;
+    QHash<QString, int> indexes;
+    const qsizetype recordsToInspect = qMin<qsizetype>(
+        linesResult.data.size(), 20);
+    for (qsizetype index = 0; index < recordsToInspect; ++index) {
+        const ParsedCsvLine candidate = parseCsvLine(
+            linesResult.data.at(index));
+        if (!candidate.ok) continue;
+        const auto candidateIndexes = headerIndex(candidate.fields);
+        const int candidateNameColumn = findColumn(
+            candidateIndexes,
+            {"name", "exercise", "activity", "activity_description",
+             "activitydescription", "specific_activity_description",
+             "specificactivitydescription"});
+        const int candidateMetColumn = findColumn(
+            candidateIndexes,
+            {"met_value", "metvalue", "met", "mets"});
+        if (candidateNameColumn >= 0 && candidateMetColumn >= 0) {
+            headerRecordIndex = index;
+            headerLine = candidate;
+            indexes = candidateIndexes;
+            break;
+        }
     }
-    const auto indexes = headerIndex(headerLine.fields);
-    const int idColumn = findColumn(indexes, {"id", "exercise_id", "code"});
-    const int nameColumn = findColumn(indexes, {"name", "exercise", "activity"});
-    const int metColumn = findColumn(indexes, {"met_value", "met", "mets"});
+    if (headerRecordIndex < 0) {
+        return ServiceResult<ImportBatch<Exercise>>::failure(
+            QStringLiteral("MISSING_REQUIRED_COLUMNS"),
+            QStringLiteral(
+                "运动 CSV 至少需要活动描述和 MET Value 两列；"
+                "允许在字段行之前保留 Compendium 总标题。"));
+    }
+    const int idColumn = findColumn(
+        indexes,
+        {"id", "exercise_id", "code", "activity_code",
+         "activitycode", "specific_activity_code",
+         "specificactivitycode"});
+    const int nameColumn = findColumn(
+        indexes,
+        {"name", "exercise", "activity", "activity_description",
+         "activitydescription", "specific_activity_description",
+         "specificactivitydescription"});
+    const int metColumn = findColumn(
+        indexes, {"met_value", "metvalue", "met", "mets"});
     const int categoryColumn = findColumn(indexes, {"category", "type"});
+    const int majorHeadingColumn = findColumn(
+        indexes,
+        {"major_heading", "majorheading", "heading", "major_category"});
     const int descriptionColumn = findColumn(
-        indexes, {"description", "details", "detail"});
+        indexes,
+        {"description", "details", "detail", "activity_description",
+         "activitydescription", "specific_activity_description",
+         "specificactivitydescription"});
+    const bool isOfficialCompendiumLayout = majorHeadingColumn >= 0
+        && (indexes.contains(QStringLiteral("activity_code"))
+            || indexes.contains(QStringLiteral("activitycode")))
+        && (indexes.contains(QStringLiteral("activity_description"))
+            || indexes.contains(QStringLiteral("activitydescription")));
     if (nameColumn < 0 || metColumn < 0) {
         return ServiceResult<ImportBatch<Exercise>>::failure(
             QStringLiteral("MISSING_REQUIRED_COLUMNS"),
@@ -584,7 +786,7 @@ ServiceResult<ImportBatch<Exercise>> CsvDataExchangeService::importExercises(
 
     ImportBatch<Exercise> batch;
     QSet<QString> usedIds;
-    for (qsizetype lineIndex = 1;
+    for (qsizetype lineIndex = headerRecordIndex + 1;
          lineIndex < linesResult.data.size();
          ++lineIndex) {
         const QString rawLine = linesResult.data.at(lineIndex);
@@ -599,14 +801,76 @@ ServiceResult<ImportBatch<Exercise>> CsvDataExchangeService::importExercises(
             continue;
         }
 
+        QString sourceId = fieldAt(parsed.fields, idColumn);
+        QString sourceName = fieldAt(parsed.fields, nameColumn);
+        QString sourceDescription = fieldAt(
+            parsed.fields, descriptionColumn);
+        QString sourceMet = fieldAt(parsed.fields, metColumn);
+
+        // The downloadable Compendium workbook contains merged cells. When
+        // Excel saves it as CSV, the code/MET/description columns shift from
+        // one major heading to another. Recover those three values from the
+        // row's content instead of relying on one fixed column position.
+        if (isOfficialCompendiumLayout) {
+            static const QRegularExpression activityCodePattern(
+                QStringLiteral("^[0-9]{5}$"));
+            QString detectedId;
+            QString detectedMet;
+            QString detectedDescription;
+            bool foundMet = false;
+            for (qsizetype fieldIndex = 1;
+                 fieldIndex < parsed.fields.size();
+                 ++fieldIndex) {
+                const QString value = parsed.fields.at(fieldIndex).trimmed();
+                if (value.isEmpty()) continue;
+                if (detectedId.isEmpty()
+                    && activityCodePattern.match(value).hasMatch()) {
+                    detectedId = value;
+                    continue;
+                }
+                if (detectedId.isEmpty()) continue;
+
+                bool numeric = false;
+                const double number = value.toDouble(&numeric);
+                if (numeric && number > 0.0 && number <= 30.0) {
+                    if (!foundMet) detectedMet = value;
+                    foundMet = true;
+                    continue;
+                }
+                if (foundMet) {
+                    detectedDescription = value;
+                    break;
+                }
+            }
+            if (!detectedId.isEmpty()) sourceId = detectedId;
+            if (!detectedMet.isEmpty()) sourceMet = detectedMet;
+            if (!detectedDescription.isEmpty()) {
+                sourceName = detectedDescription;
+                sourceDescription = detectedDescription;
+            }
+        }
+
         Exercise exercise;
-        exercise.name = fieldAt(parsed.fields, nameColumn);
+        exercise.name = sourceName;
         bool metOk = false;
-        exercise.metValue = fieldAt(parsed.fields, metColumn).toDouble(&metOk);
+        exercise.metValue = sourceMet.toDouble(&metOk);
+        const QString rawCategory = categoryColumn >= 0
+            ? fieldAt(parsed.fields, categoryColumn)
+            : fieldAt(parsed.fields, majorHeadingColumn);
         const auto category = exerciseCategoryFromDataset(
-            fieldAt(parsed.fields, categoryColumn));
-        exercise.description = fieldAt(parsed.fields, descriptionColumn);
-        exercise.id = fieldAt(parsed.fields, idColumn);
+            rawCategory, sourceDescription);
+        exercise.description = sourceDescription;
+        const QString majorHeading = fieldAt(
+            parsed.fields, majorHeadingColumn);
+        if (!majorHeading.isEmpty()
+            && !exercise.description.startsWith(
+                majorHeading + QStringLiteral(" — "),
+                Qt::CaseInsensitive)) {
+            exercise.description = majorHeading
+                + QStringLiteral(" — ")
+                + exercise.description;
+        }
+        exercise.id = sourceId;
         if (exercise.id.isEmpty()) {
             exercise.id = stableDatasetId(
                 QStringLiteral("EXD_"),
@@ -860,6 +1124,227 @@ ServiceResult<ImportBatch<Recipe>> CsvDataExchangeService::importRecipes(
         batch,
         QStringLiteral("食谱 CSV 解析完成。"),
         batch.rowMessages);
+}
+
+ServiceResult<ImportStreamSummary> CsvDataExchangeService::streamRecipes(
+    const QString& filePath,
+    DataFormat format,
+    const std::function<void(const Recipe&)>& visitor) const
+{
+    if (format != DataFormat::Csv) {
+        return ServiceResult<ImportStreamSummary>::failure(
+            QStringLiteral("UNSUPPORTED_FORMAT"),
+            QStringLiteral("食谱数据当前只支持 CSV 格式。"));
+    }
+    if (!visitor) {
+        return ServiceResult<ImportStreamSummary>::failure(
+            QStringLiteral("INVALID_STREAM_VISITOR"),
+            QStringLiteral("流式食谱访问函数不能为空。"));
+    }
+
+    CsvRecordStream stream(filePath);
+    if (!stream.open()) {
+        return ServiceResult<ImportStreamSummary>::failure(
+            QStringLiteral("DATASET_OPEN_ERROR"),
+            QStringLiteral("无法打开数据集：%1")
+                .arg(stream.errorString()));
+    }
+
+    const std::optional<QString> headerRecord = stream.next();
+    if (!headerRecord.has_value()) {
+        return ServiceResult<ImportStreamSummary>::failure(
+            stream.hasParseError()
+                ? QStringLiteral("INVALID_CSV")
+                : QStringLiteral("EMPTY_DATASET"),
+            stream.hasParseError()
+                ? stream.errorString()
+                : QStringLiteral("CSV 文件中没有数据。"));
+    }
+
+    const ParsedCsvLine headerLine = parseCsvLine(*headerRecord);
+    if (!headerLine.ok) {
+        return ServiceResult<ImportStreamSummary>::failure(
+            QStringLiteral("INVALID_CSV_HEADER"), headerLine.error);
+    }
+    const auto indexes = headerIndex(headerLine.fields);
+    const int idColumn = findColumn(
+        indexes, {"id", "recipe_id", "recipeid", "code"});
+    const int nameColumn = findColumn(
+        indexes, {"name", "recipe_name", "title"});
+    const int calorieColumn = findColumn(
+        indexes, {"total_calories", "calories", "calories_kcal", "kcal"});
+    const int proteinColumn = findColumn(
+        indexes, {"proteincontent", "protein_content", "protein_g"});
+    const int carbohydrateColumn = findColumn(
+        indexes,
+        {"carbohydratecontent", "carbohydrate_content", "carbohydrate_g"});
+    const int fatColumn = findColumn(
+        indexes, {"fatcontent", "fat_content", "fat_g"});
+    const int saturatedFatColumn = findColumn(
+        indexes,
+        {"saturatedfatcontent", "saturated_fat_content", "saturated_fat_g"});
+    const int fiberColumn = findColumn(
+        indexes, {"fibercontent", "fiber_content", "fiber_g"});
+    const int sugarColumn = findColumn(
+        indexes, {"sugarcontent", "sugar_content", "sugar_g"});
+    const int sodiumColumn = findColumn(
+        indexes, {"sodiumcontent", "sodium_content", "sodium_mg"});
+    const int cholesterolColumn = findColumn(
+        indexes,
+        {"cholesterolcontent", "cholesterol_content", "cholesterol_mg"});
+    const int servingsColumn = findColumn(
+        indexes, {"recipeservings", "recipe_servings", "servings"});
+    const int mealColumn = findColumn(indexes, {"meal_type", "meal"});
+    const int categoryColumn = findColumn(
+        indexes, {"recipecategory", "recipe_category", "category"});
+    const int keywordsColumn = findColumn(
+        indexes, {"keywords", "recipe_keywords"});
+    const int ingredientsColumn = findColumn(
+        indexes, {"ingredients", "ingredients_json"});
+    const int ingredientPartsColumn = findColumn(
+        indexes,
+        {"recipeingredientparts", "recipe_ingredient_parts", "ingredient_parts"});
+    const int ingredientQuantitiesColumn = findColumn(
+        indexes,
+        {"recipeingredientquantities", "recipe_ingredient_quantities",
+         "ingredient_quantities"});
+    const int tagsColumn = findColumn(
+        indexes,
+        {"nutrition_tags", "nutrition_tags_json", "tags", "keywords"});
+    const bool hasMealSource = mealColumn >= 0
+        || categoryColumn >= 0
+        || keywordsColumn >= 0;
+    const bool hasIngredientSource = ingredientsColumn >= 0
+        || ingredientPartsColumn >= 0;
+    if (nameColumn < 0
+        || calorieColumn < 0
+        || !hasMealSource
+        || !hasIngredientSource) {
+        return ServiceResult<ImportStreamSummary>::failure(
+            QStringLiteral("MISSING_REQUIRED_COLUMNS"),
+            QStringLiteral(
+                "食谱 CSV 需要名称、热量、餐别来源和食材来源列。"
+                "餐别可以使用 meal_type，或使用 RecipeCategory/Keywords 推断；"
+                "食材可以使用 ingredients，或使用 RecipeIngredientParts。"));
+    }
+
+    ImportStreamSummary summary;
+    QSet<QString> usedIds;
+    while (const std::optional<QString> rawRecord = stream.next()) {
+        const int displayRecord = stream.recordNumber();
+        const ParsedCsvLine parsed = parseCsvLine(*rawRecord);
+        if (!parsed.ok) {
+            ++summary.skippedRows;
+            appendRowMessage(
+                summary.rowMessages,
+                QStringLiteral("第 %1 条记录：%2")
+                    .arg(displayRecord)
+                    .arg(parsed.error));
+            continue;
+        }
+
+        Recipe recipe;
+        recipe.name = fieldAt(parsed.fields, nameColumn);
+        bool caloriesOk = false;
+        recipe.totalCalories = fieldAt(parsed.fields, calorieColumn)
+                                    .toDouble(&caloriesOk);
+        recipe.nutritionPerServing.caloriesKcal = recipe.totalCalories;
+
+        const auto readOptionalNutrition =
+            [&parsed](int column) -> double {
+            bool ok = false;
+            const double value = fieldAt(parsed.fields, column).toDouble(&ok);
+            return ok && value >= 0.0 ? value : 0.0;
+        };
+        recipe.nutritionPerServing.proteinG =
+            readOptionalNutrition(proteinColumn);
+        recipe.nutritionPerServing.carbohydrateG =
+            readOptionalNutrition(carbohydrateColumn);
+        recipe.nutritionPerServing.fatG = readOptionalNutrition(fatColumn);
+        recipe.nutritionPerServing.saturatedFatG =
+            readOptionalNutrition(saturatedFatColumn);
+        recipe.nutritionPerServing.fiberG = readOptionalNutrition(fiberColumn);
+        recipe.nutritionPerServing.sugarG = readOptionalNutrition(sugarColumn);
+        recipe.nutritionPerServing.sodiumMg =
+            readOptionalNutrition(sodiumColumn);
+        recipe.nutritionPerServing.cholesterolMg =
+            readOptionalNutrition(cholesterolColumn);
+
+        bool servingsOk = false;
+        const double importedServings = fieldAt(
+            parsed.fields, servingsColumn).toDouble(&servingsOk);
+        recipe.servings = servingsOk && importedServings > 0.0
+            ? qMax(1, static_cast<int>(importedServings))
+            : 1;
+
+        const QString categoryText = fieldAt(parsed.fields, categoryColumn);
+        const QString keywordsText = fieldAt(parsed.fields, keywordsColumn);
+        auto mealType = mealTypeFromDataset(
+            fieldAt(parsed.fields, mealColumn));
+        if (!mealType.has_value()) {
+            mealType = mealTypeFromFoodCom(categoryText, keywordsText);
+        }
+
+        const auto ingredientsResult = ingredientsColumn >= 0
+            ? parseIngredients(fieldAt(parsed.fields, ingredientsColumn))
+            : parseFoodComIngredients(
+                  fieldAt(parsed.fields, ingredientPartsColumn),
+                  fieldAt(parsed.fields, ingredientQuantitiesColumn));
+
+        recipe.nutritionTags = splitTags(fieldAt(parsed.fields, tagsColumn));
+        if (!categoryText.trimmed().isEmpty()
+            && !recipe.nutritionTags.contains(
+                categoryText.trimmed(), Qt::CaseInsensitive)) {
+            recipe.nutritionTags.append(categoryText.trimmed());
+        }
+        recipe.id = fieldAt(parsed.fields, idColumn);
+        if (recipe.id.isEmpty()) {
+            recipe.id = stableDatasetId(
+                QStringLiteral("RD_"),
+                recipe.name + QLatin1Char('|')
+                    + QString::number(recipe.totalCalories, 'g', 12)
+                    + QLatin1Char('|') + categoryText
+                    + QLatin1Char('|') + keywordsText);
+        }
+
+        QString reason;
+        if (recipe.name.isEmpty()) reason = QStringLiteral("食谱名称为空");
+        else if (!caloriesOk || recipe.totalCalories < 0.0) {
+            reason = QStringLiteral("总热量必须是非负数字");
+        } else if (!mealType.has_value()) {
+            reason = QStringLiteral("无法识别餐别");
+        } else if (!ingredientsResult.ok) {
+            reason = ingredientsResult.message;
+        } else if (ingredientsResult.data.isEmpty()) {
+            reason = QStringLiteral("食材列表为空");
+        } else if (usedIds.contains(recipe.id)) {
+            reason = QStringLiteral("文件内食谱编号重复");
+        }
+        if (!reason.isEmpty()) {
+            ++summary.skippedRows;
+            appendRowMessage(
+                summary.rowMessages,
+                QStringLiteral("第 %1 条记录：%2")
+                    .arg(displayRecord)
+                    .arg(reason));
+            continue;
+        }
+
+        recipe.mealType = *mealType;
+        recipe.ingredients = ingredientsResult.data;
+        usedIds.insert(recipe.id);
+        visitor(recipe);
+        ++summary.importedRows;
+    }
+
+    if (stream.hasParseError()) {
+        return ServiceResult<ImportStreamSummary>::failure(
+            QStringLiteral("INVALID_CSV"), stream.errorString());
+    }
+    return ServiceResult<ImportStreamSummary>::success(
+        summary,
+        QStringLiteral("食谱 CSV 流式解析完成。"),
+        summary.rowMessages);
 }
 
 ServiceResult<bool> CsvDataExchangeService::exportUsers(

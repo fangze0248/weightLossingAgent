@@ -41,6 +41,30 @@ target_link_libraries(persistence_core PUBLIC
 
 target_compile_features(persistence_core PUBLIC cxx_std_17)
 
+add_library(dataset_core STATIC
+    src/application/csvdataexchangeservice.h
+    src/application/csvdataexchangeservice.cpp
+    src/application/foodcompreprocessor.h
+    src/application/foodcompreprocessor.cpp
+    src/application/compendiumpreprocessor.h
+    src/application/compendiumpreprocessor.cpp
+    src/application/builtindatasetinitializer.h
+    src/application/builtindatasetinitializer.cpp
+)
+
+target_include_directories(dataset_core PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+
+target_link_libraries(dataset_core PUBLIC
+    persistence_core
+    Qt${QT_VERSION_MAJOR}::Core
+    Qt${QT_VERSION_MAJOR}::Sql
+)
+
+target_compile_features(dataset_core PUBLIC cxx_std_17)
+
 add_library(recommendation_core STATIC
     src/recommendation/recommendationcore.h
     src/recommendation/recommendationcore.cpp
@@ -70,8 +94,6 @@ set(PROJECT_SOURCES
         main.cpp
         mainwindow.cpp
         mainwindow.h
-        src/application/csvdataexchangeservice.cpp
-        src/application/csvdataexchangeservice.h
         src/application/plangenerationservice.cpp
         src/application/plangenerationservice.h
         src/interfaces/IPlanGenerationService.h
@@ -93,6 +115,7 @@ set(PROJECT_SOURCES
         src/ui/profiledialog.h
         src/ui/recipepage.cpp
         src/ui/recipepage.h
+        resources/datasets.qrc
 )
 
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
@@ -126,7 +149,37 @@ target_link_libraries(weightLossingAgent PRIVATE
     Qt${QT_VERSION_MAJOR}::Widgets
     Qt${QT_VERSION_MAJOR}::Sql
     persistence_core
+    dataset_core
     recommendation_core
+)
+
+add_executable(foodcom_preprocessor
+    tools/foodcom_preprocessor_main.cpp
+)
+
+target_link_libraries(foodcom_preprocessor PRIVATE
+    dataset_core
+    Qt${QT_VERSION_MAJOR}::Core
+)
+
+add_executable(compendium_preprocessor
+    tools/compendium_preprocessor_main.cpp
+)
+
+target_link_libraries(compendium_preprocessor PRIVATE
+    dataset_core
+    Qt${QT_VERSION_MAJOR}::Core
+)
+
+add_executable(dataset_importer
+    tools/dataset_importer_main.cpp
+)
+
+target_link_libraries(dataset_importer PRIVATE
+    dataset_core
+    persistence_core
+    Qt${QT_VERSION_MAJOR}::Core
+    Qt${QT_VERSION_MAJOR}::Sql
 )
 
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
@@ -288,7 +341,6 @@ endif()
 
 add_executable(csv_data_exchange_service_test
     tests/csv_data_exchange_service_test.cpp
-    src/application/csvdataexchangeservice.cpp
 )
 
 target_include_directories(csv_data_exchange_service_test PRIVATE
@@ -297,6 +349,7 @@ target_include_directories(csv_data_exchange_service_test PRIVATE
 )
 
 target_link_libraries(csv_data_exchange_service_test PRIVATE
+    dataset_core
     persistence_core
     Qt${QT_VERSION_MAJOR}::Core
     Qt${QT_VERSION_MAJOR}::Sql
@@ -313,5 +366,31 @@ else()
     add_test(
         NAME csv_data_exchange_service_test
         COMMAND $<TARGET_FILE:csv_data_exchange_service_test>
+    )
+endif()
+
+add_executable(dataset_pipeline_test
+    tests/dataset_pipeline_test.cpp
+    resources/datasets.qrc
+)
+
+target_link_libraries(dataset_pipeline_test PRIVATE
+    dataset_core
+    persistence_core
+    Qt${QT_VERSION_MAJOR}::Core
+    Qt${QT_VERSION_MAJOR}::Sql
+)
+
+if(WIN32)
+    add_test(
+        NAME dataset_pipeline_test
+        COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt${QT_VERSION_MAJOR}::Core>;$ENV{PATH}"
+            $<TARGET_FILE:dataset_pipeline_test>
+    )
+else()
+    add_test(
+        NAME dataset_pipeline_test
+        COMMAND $<TARGET_FILE:dataset_pipeline_test>
     )
 endif()

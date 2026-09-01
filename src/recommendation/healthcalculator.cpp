@@ -7,16 +7,13 @@ namespace {
 
 constexpr double caloriesPerKilogram = 7700.0;
 
-double activityFactor(int activityLevel)
+double baselineActivityFactor(int averageDailySteps)
 {
-    switch (activityLevel) {
-    case 1: return 1.2;
-    case 2: return 1.375;
-    case 3: return 1.55;
-    case 4: return 1.725;
-    case 5: return 1.9;
-    default: return 0.0;
-    }
+    if (averageDailySteps < 5000) return 1.20;
+    if (averageDailySteps < 7500) return 1.30;
+    if (averageDailySteps < 10000) return 1.40;
+    if (averageDailySteps < 12500) return 1.50;
+    return 1.60;
 }
 
 QString bmiEvaluation(double bmi)
@@ -39,10 +36,10 @@ ServiceResult<CalorieNeed> HealthCalculator::calculate(
                 "Age must be at least 18, and height and weight must be positive."));
     }
 
-    if (user.activityLevel < 1 || user.activityLevel > 5) {
+    if (user.averageDailySteps < 0 || user.averageDailySteps > 50000) {
         return ServiceResult<CalorieNeed>::failure(
-            QStringLiteral("INVALID_ACTIVITY_LEVEL"),
-            QStringLiteral("Activity level must be between 1 and 5."));
+            QStringLiteral("INVALID_DAILY_STEPS"),
+            QStringLiteral("日均步数必须在 0 到 50000 之间。"));
     }
 
     if (user.dietContributionRatio < 0.0
@@ -67,7 +64,9 @@ ServiceResult<CalorieNeed> HealthCalculator::calculate(
                + 6.25 * user.heightCm
                - 5.0 * user.age
                + (user.gender == Gender::Male ? 5.0 : -161.0);
-    need.tdee = need.bmr * activityFactor(user.activityLevel);
+    // This factor represents ordinary daily movement inferred from steps.
+    // Exercise prescribed by the planner is deliberately not added here.
+    need.tdee = need.bmr * baselineActivityFactor(user.averageDailySteps);
 
     const double dailyEnergyChange =
         user.weeklyGoalKg * caloriesPerKilogram / 7.0;
@@ -97,7 +96,9 @@ ServiceResult<CalorieNeed> HealthCalculator::calculate(
 
     QStringList warnings{
         QStringLiteral(
-            "Calculated values are educational estimates, not medical advice.")
+            "结果仅为健康管理估算，不替代医生或营养师建议。"),
+        QStringLiteral(
+            "基础生活消耗由过去 7 天日均步数估算，推荐锻炼未重复计入。")
     };
     if (user.age > 78) {
         warnings.append(QStringLiteral(

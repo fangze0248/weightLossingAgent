@@ -1,4 +1,5 @@
 #include "mainwindow.h"
+#include "application/builtindatasetinitializer.h"
 #include "application/plangenerationservice.h"
 #include "application/csvdataexchangeservice.h"
 #include "database/databasemanager.h"
@@ -27,8 +28,7 @@ int main(int argc, char *argv[])
     DatabaseManager databaseManager;
     QString databaseError;
     if (!databaseManager.open(&databaseError)
-        || !databaseManager.initialize(&databaseError)
-        || !databaseManager.seedDemoData(&databaseError)) {
+        || !databaseManager.initialize(&databaseError)) {
         QMessageBox::critical(
             nullptr,
             QStringLiteral("Database error"),
@@ -40,6 +40,34 @@ int main(int argc, char *argv[])
     SqliteRecipeRepository recipeRepository(databaseManager.database());
     SqlitePlanRepository planRepository(databaseManager.database());
     SqliteUserRepository userRepository(databaseManager.database());
+    CsvDataExchangeService dataExchangeService;
+    BuiltinDatasetInitializer datasetInitializer(
+        databaseManager.database(),
+        exerciseRepository,
+        recipeRepository,
+        dataExchangeService);
+    const auto exerciseDatasetResult =
+        datasetInitializer.importExercisesIfChanged(
+            QStringLiteral("builtin_exercises"),
+            QStringLiteral(":/datasets/exercises.csv"));
+    if (!exerciseDatasetResult.ok) {
+        QMessageBox::critical(
+            nullptr,
+            QStringLiteral("Dataset error"),
+            exerciseDatasetResult.message);
+        return 1;
+    }
+    const auto recipeDatasetResult = datasetInitializer.importRecipesIfChanged(
+        QStringLiteral("builtin_recipes"),
+        QStringLiteral(":/datasets/recipes.csv"));
+    if (!recipeDatasetResult.ok) {
+        QMessageBox::critical(
+            nullptr,
+            QStringLiteral("Dataset error"),
+            recipeDatasetResult.message);
+        return 1;
+    }
+
     HealthCalculator healthCalculator;
     WeeklyPlanner weeklyPlanner;
     PlanGenerationService planGenerationService(userRepository,
@@ -48,7 +76,6 @@ int main(int argc, char *argv[])
                                                 planRepository,
                                                 healthCalculator,
                                                 weeklyPlanner);
-    CsvDataExchangeService dataExchangeService;
     SessionManager sessionManager;
     MainWindow w(exerciseRepository,
                  recipeRepository,

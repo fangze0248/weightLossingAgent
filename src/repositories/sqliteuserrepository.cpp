@@ -22,6 +22,8 @@ UserProfile userFromQuery(const QSqlQuery& query)
     user.heightCm = query.value(QStringLiteral("height_cm")).toDouble();
     user.weightKg = query.value(QStringLiteral("weight_kg")).toDouble();
     user.targetWeightKg = query.value(QStringLiteral("target_weight_kg")).toDouble();
+    user.averageDailySteps =
+        query.value(QStringLiteral("average_daily_steps")).toInt();
     user.activityLevel = query.value(QStringLiteral("activity_level")).toInt();
     user.goalType = goalTypeFromStorageString(
                         query.value(QStringLiteral("goal_type")).toString())
@@ -44,7 +46,8 @@ ServiceResult<UserProfile> validateUser(const UserProfile& user)
             QStringLiteral("User id and name are required."));
     }
     if (user.age <= 0 || user.heightCm <= 0.0 || user.weightKg <= 0.0
-        || user.targetWeightKg <= 0.0 || user.activityLevel < 1
+        || user.targetWeightKg <= 0.0 || user.averageDailySteps < 0
+        || user.averageDailySteps > 50000 || user.activityLevel < 1
         || user.activityLevel > 5) {
         return ServiceResult<UserProfile>::failure(
             QStringLiteral("INVALID_USER"),
@@ -67,6 +70,8 @@ void bindUser(QSqlQuery& query, const UserProfile& user)
     query.bindValue(QStringLiteral(":height_cm"), user.heightCm);
     query.bindValue(QStringLiteral(":weight_kg"), user.weightKg);
     query.bindValue(QStringLiteral(":target_weight_kg"), user.targetWeightKg);
+    query.bindValue(QStringLiteral(":average_daily_steps"),
+                    user.averageDailySteps);
     query.bindValue(QStringLiteral(":activity_level"), user.activityLevel);
     query.bindValue(QStringLiteral(":goal_type"), toStorageString(user.goalType));
     query.bindValue(QStringLiteral(":weekly_goal_kg"), user.weeklyGoalKg);
@@ -121,11 +126,13 @@ ServiceResult<UserProfile> SqliteUserRepository::add(const UserProfile& user)
     QSqlQuery query(database_);
     query.prepare(QStringLiteral(
         "INSERT INTO users (id, name, gender, age, height_cm, weight_kg, "
-        "target_weight_kg, activity_level, goal_type, weekly_goal_kg, "
+        "target_weight_kg, average_daily_steps, activity_level, goal_type, "
+        "weekly_goal_kg, "
         "diet_contribution_ratio, disliked_exercise_ids_json, "
         "disliked_recipe_ids_json) VALUES (:id, :name, :gender, :age, "
-        ":height_cm, :weight_kg, :target_weight_kg, :activity_level, "
-        ":goal_type, :weekly_goal_kg, :diet_ratio, :disliked_exercises, "
+        ":height_cm, :weight_kg, :target_weight_kg, :average_daily_steps, "
+        ":activity_level, :goal_type, :weekly_goal_kg, :diet_ratio, "
+        ":disliked_exercises, "
         ":disliked_recipes)"));
     bindUser(query, user);
     if (!query.exec()) {
@@ -144,7 +151,9 @@ ServiceResult<UserProfile> SqliteUserRepository::update(const UserProfile& user)
     query.prepare(QStringLiteral(
         "UPDATE users SET name = :name, gender = :gender, age = :age, "
         "height_cm = :height_cm, weight_kg = :weight_kg, "
-        "target_weight_kg = :target_weight_kg, activity_level = :activity_level, "
+        "target_weight_kg = :target_weight_kg, "
+        "average_daily_steps = :average_daily_steps, "
+        "activity_level = :activity_level, "
         "goal_type = :goal_type, weekly_goal_kg = :weekly_goal_kg, "
         "diet_contribution_ratio = :diet_ratio, "
         "disliked_exercise_ids_json = :disliked_exercises, "

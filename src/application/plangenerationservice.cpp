@@ -7,7 +7,106 @@
 #include "interfaces/IUserRepository.h"
 #include "interfaces/IWeeklyPlanner.h"
 
+#include <QSet>
+
+#include <cmath>
 #include <utility>
+
+namespace {
+
+// A seven-day plan can consume up to two recipes per meal and three exercise
+// items per day. Keep enough SQL-ranked candidates for whole-week diversity
+// without loading the complete tables into memory.
+constexpr int kRecipeCandidatesPerMeal = 32;
+constexpr int kExerciseCandidateLimit = 32;
+constexpr double kReferenceExerciseMinutes = 30.0;
+
+void appendUniqueRecipes(QVector<Recipe>* destination,
+                         QSet<QString>* acceptedIds,
+                         const QVector<Recipe>& source)
+{
+    if (!destination || !acceptedIds) return;
+    for (const Recipe& recipe : source) {
+        const QString id = recipe.id.trimmed();
+        if (id.isEmpty() || acceptedIds->contains(id)) continue;
+        acceptedIds->insert(id);
+        destination->append(recipe);
+    }
+}
+
+ServiceResult<QVector<Recipe>> findRecipeCandidates(
+    IRecipeRepository& repository,
+    const UserProfile& user,
+    double dailyTargetCalories,
+    const MealRecommendationOptions& options)
+{
+    QVector<Recipe> candidates;
+    QSet<QString> acceptedIds;
+
+    const auto queryMeal = [&](MealType mealType, double ratio)
+        -> ServiceResult<bool> {
+        if (ratio <= 0.0) return ServiceResult<bool>::success(true);
+        RecipeFilter filter;
+        filter.mealType = mealType;
+        filter.excludedIds = user.dislikedRecipeIds;
+        filter.targetCalories = dailyTargetCalories * ratio;
+        filter.limit = kRecipeCandidatesPerMeal;
+        const auto result = repository.findAll(filter);
+        if (!result.ok) {
+            return ServiceResult<bool>::failure(
+                result.code, result.message, result.warnings);
+        }
+        appendUniqueRecipes(&candidates, &acceptedIds, result.data);
+        return ServiceResult<bool>::success(true);
+    };
+
+    const auto breakfast = queryMeal(
+        MealType::Breakfast, options.breakfastRatio);
+    if (!breakfast.ok) {
+        return ServiceResult<QVector<Recipe>>::failure(
+            breakfast.code, breakfast.message, breakfast.warnings);
+    }
+    const auto lunch = queryMeal(MealType::Lunch, options.lunchRatio);
+    if (!lunch.ok) {
+        return ServiceResult<QVector<Recipe>>::failure(
+            lunch.code, lunch.message, lunch.warnings);
+    }
+    const auto dinner = queryMeal(MealType::Dinner, options.dinnerRatio);
+    if (!dinner.ok) {
+        return ServiceResult<QVector<Recipe>>::failure(
+            dinner.code, dinner.message, dinner.warnings);
+    }
+    if (options.includeSnack && options.snackRatio > 0.0) {
+        const auto snack = queryMeal(MealType::Snack, options.snackRatio);
+        if (!snack.ok) {
+            return ServiceResult<QVector<Recipe>>::failure(
+                snack.code, snack.message, snack.warnings);
+        }
+    }
+
+    return ServiceResult<QVector<Recipe>>::success(
+        candidates,
+        QStringLiteral("已从数据库按餐别和目标热量检索食谱候选。"));
+}
+
+ServiceResult<QVector<Exercise>> findExerciseCandidates(
+    IExerciseRepository& repository,
+    const UserProfile& user,
+    double targetCalories)
+{
+    ExerciseFilter filter;
+    filter.excludedIds = user.dislikedExerciseIds;
+    filter.minimumMet = 1.5;
+    filter.maximumMet = 18.0;
+    filter.limit = kExerciseCandidateLimit;
+    if (user.weightKg > 0.0 && targetCalories > 0.0) {
+        filter.targetMet = targetCalories * 200.0
+            / (3.5 * user.weightKg * kReferenceExerciseMinutes);
+    }
+    return repository.findAll(filter);
+}
+
+} // namespace
 
 PlanGenerationService::PlanGenerationService(
     IUserRepository& userRepository,
@@ -56,7 +155,10 @@ ServiceResult<WeeklyPlan> PlanGenerationService::generateAndSave(
             calorieResult.warnings);
     }
 
-    const auto exerciseResult = exerciseRepository_.findAll();
+    const auto exerciseResult = findExerciseCandidates(
+        exerciseRepository_,
+        *userResult.data,
+        calorieResult.data.exerciseTarget);
     if (!exerciseResult.ok) {
         return ServiceResult<WeeklyPlan>::failure(
             exerciseResult.code,
@@ -64,7 +166,11 @@ ServiceResult<WeeklyPlan> PlanGenerationService::generateAndSave(
             exerciseResult.warnings);
     }
 
-    const auto recipeResult = recipeRepository_.findAll();
+    const auto recipeResult = findRecipeCandidates(
+        recipeRepository_,
+        *userResult.data,
+        calorieResult.data.recommendedIntake,
+        options.mealOptions);
     if (!recipeResult.ok) {
         return ServiceResult<WeeklyPlan>::failure(
             recipeResult.code,

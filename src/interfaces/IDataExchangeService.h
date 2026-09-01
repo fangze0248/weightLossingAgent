@@ -11,9 +11,17 @@
 #include <QStringList>
 #include <QVector>
 
+#include <functional>
+
 template<typename T>
 struct ImportBatch {
     QVector<T> items;
+    int importedRows = 0;
+    int skippedRows = 0;
+    QStringList rowMessages;
+};
+
+struct ImportStreamSummary {
     int importedRows = 0;
     int skippedRows = 0;
     QStringList rowMessages;
@@ -32,6 +40,10 @@ public:
     virtual ServiceResult<ImportBatch<Recipe>> importRecipes(
         const QString& filePath,
         DataFormat format) const = 0;
+    virtual ServiceResult<ImportStreamSummary> streamRecipes(
+        const QString& filePath,
+        DataFormat format,
+        const std::function<void(const Recipe&)>& visitor) const = 0;
 
     virtual ServiceResult<bool> exportUsers(
         const QVector<UserProfile>& users,
