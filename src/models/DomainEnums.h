@@ -14,6 +14,14 @@ enum class GoalType {
     Gain
 };
 
+// 运动偏好目标与体重目标分开：GoalType 决定能量方向，ExerciseGoal
+// 决定合法运动方案之间的排序偏好。
+enum class ExerciseGoal {
+    LightHealth,
+    BuildFitness,
+    MuscleGain
+};
+
 enum class ExerciseCategory {
     Aerobic,
     Strength,
@@ -60,6 +68,19 @@ inline QString toStorageString(GoalType value)
     return QStringLiteral("lose");
 }
 
+inline QString toStorageString(ExerciseGoal value)
+{
+    switch (value) {
+    case ExerciseGoal::LightHealth:
+        return QStringLiteral("light_health");
+    case ExerciseGoal::BuildFitness:
+        return QStringLiteral("build_fitness");
+    case ExerciseGoal::MuscleGain:
+        return QStringLiteral("muscle_gain");
+    }
+    return QStringLiteral("light_health");
+}
+
 inline QString toStorageString(ExerciseCategory value)
 {
     switch (value) {
@@ -101,6 +122,22 @@ inline std::optional<GoalType> goalTypeFromStorageString(const QString& value)
     if (normalized == QStringLiteral("lose")) return GoalType::Lose;
     if (normalized == QStringLiteral("maintain")) return GoalType::Maintain;
     if (normalized == QStringLiteral("gain")) return GoalType::Gain;
+    return std::nullopt;
+}
+
+inline std::optional<ExerciseGoal> exerciseGoalFromStorageString(
+    const QString& value)
+{
+    const QString normalized = value.trimmed().toLower();
+    if (normalized == QStringLiteral("light_health")) {
+        return ExerciseGoal::LightHealth;
+    }
+    if (normalized == QStringLiteral("build_fitness")) {
+        return ExerciseGoal::BuildFitness;
+    }
+    if (normalized == QStringLiteral("muscle_gain")) {
+        return ExerciseGoal::MuscleGain;
+    }
     return std::nullopt;
 }
 

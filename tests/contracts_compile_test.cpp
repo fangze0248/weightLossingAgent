@@ -18,9 +18,12 @@
 #include "models/Feedback.h"
 #include "models/PlanModels.h"
 #include "models/Recipe.h"
+#include "models/RecommendationPreference.h"
 #include "models/UserProfile.h"
 
 #include "recommendation/recommendationcore.h"
+
+#include <cmath>
 
 int main()
 {
@@ -41,6 +44,32 @@ int main()
 
     if (recommendation_core::interfaceVersion() != 1) {
         return 3;
+    }
+
+    user.exerciseGoal = ExerciseGoal::MuscleGain;
+    if (toStorageString(user.exerciseGoal) != QStringLiteral("muscle_gain")
+        || exerciseGoalFromStorageString(QStringLiteral("build_fitness"))
+            != ExerciseGoal::BuildFitness) {
+        return 4;
+    }
+
+    const auto oneStarWeight = feedbackWeightFromStars(1);
+    const auto twoStarWeight = feedbackWeightFromStars(2);
+    const auto threeStarWeight = feedbackWeightFromStars(3);
+    const auto fourStarWeight = feedbackWeightFromStars(4);
+    const auto fiveStarWeight = feedbackWeightFromStars(5);
+    if (!oneStarWeight.has_value()
+        || !twoStarWeight.has_value()
+        || !threeStarWeight.has_value()
+        || !fourStarWeight.has_value()
+        || !fiveStarWeight.has_value()
+        || std::abs(*oneStarWeight - 0.6) > 1e-9
+        || std::abs(*twoStarWeight - 0.8) > 1e-9
+        || std::abs(*threeStarWeight - 1.0) > 1e-9
+        || std::abs(*fourStarWeight - 1.2) > 1e-9
+        || std::abs(*fiveStarWeight - 1.4) > 1e-9
+        || feedbackWeightFromStars(0).has_value()) {
+        return 5;
     }
 
     (void)user;
