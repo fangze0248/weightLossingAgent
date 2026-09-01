@@ -1,9 +1,11 @@
 #include "ui/dashboardpage.h"
 
 #include "interfaces/IHealthCalculator.h"
+#include "interfaces/IFeedbackService.h"
 #include "interfaces/IPlanRepository.h"
 #include "interfaces/IUserRepository.h"
 #include "session/sessionmanager.h"
+#include "ui/feedbackdialog.h"
 #include "ui/profiledialog.h"
 
 #include <QAbstractItemView>
@@ -76,12 +78,14 @@ QTableWidgetItem* readonlyItem(const QString& text)
 DashboardPage::DashboardPage(IUserRepository& userRepository,
                              IPlanRepository& planRepository,
                              IHealthCalculator& healthCalculator,
+                             IFeedbackService& feedbackService,
                              SessionManager& sessionManager,
                              QWidget* parent)
     : QWidget(parent),
       userRepository_(userRepository),
       planRepository_(planRepository),
       healthCalculator_(healthCalculator),
+      feedbackService_(feedbackService),
       sessionManager_(sessionManager)
 {
     setProperty("page", true);
@@ -308,8 +312,30 @@ void DashboardPage::checkInSelectedDay()
     }
 
     currentPlan_ = saveResult.data;
+    const DailyPlan& day = currentPlan_->days.at(row);
     updatePlanPanel();
     checkInTable_->selectRow(row);
+
+    // 打卡成功后弹出享受度反馈板块，未体验的项不会写入数据库。
+    FeedbackDialog dialog(sessionManager_.currentUserId(),
+                          currentPlan_->planId,
+                          day,
+                          this);
+    if (dialog.exec() == QDialog::Accepted) {
+        const QVector<Feedback> items = dialog.collectedFeedback();
+        int savedCount = 0;
+        for (const Feedback& feedback : items) {
+            if (feedbackService_.record(feedback).ok) {
+                ++savedCount;
+            }
+        }
+        if (savedCount < items.size()) {
+            QMessageBox::warning(this,
+                                 QStringLiteral("反馈保存部分失败"),
+                                 QStringLiteral("部分反馈未能保存，可稍后重试。"));
+        }
+    }
+
     QMessageBox::information(this,
                              QStringLiteral("打卡成功"),
                              QStringLiteral("当天计划已标记为完成"));

@@ -4,11 +4,13 @@
 #include "application/csvdataexchangeservice.h"
 #include "database/databasemanager.h"
 #include "repositories/sqliteexerciserepository.h"
+#include "repositories/sqlitefeedbackrepository.h"
 #include "repositories/sqliteplanrepository.h"
 #include "repositories/sqlitereciperepository.h"
 #include "repositories/sqliteuserrepository.h"
 #include "recommendation/healthcalculator.h"
 #include "recommendation/WeeklyPlanner.h"
+#include "services/FeedbackService.h"
 #include "session/sessionmanager.h"
 #include "ui/appstyle.h"
 
@@ -40,6 +42,8 @@ int main(int argc, char *argv[])
     SqliteRecipeRepository recipeRepository(databaseManager.database());
     SqlitePlanRepository planRepository(databaseManager.database());
     SqliteUserRepository userRepository(databaseManager.database());
+    SqliteFeedbackRepository feedbackRepository(databaseManager.database());
+    FeedbackService feedbackService(feedbackRepository);
     CsvDataExchangeService dataExchangeService;
     BuiltinDatasetInitializer datasetInitializer(
         databaseManager.database(),
@@ -75,7 +79,8 @@ int main(int argc, char *argv[])
                                                 recipeRepository,
                                                 planRepository,
                                                 healthCalculator,
-                                                weeklyPlanner);
+                                                weeklyPlanner,
+                                                feedbackService);
     SessionManager sessionManager;
     MainWindow w(exerciseRepository,
                  recipeRepository,
@@ -84,6 +89,7 @@ int main(int argc, char *argv[])
                  dataExchangeService,
                  userRepository,
                  healthCalculator,
+                 feedbackService,
                  sessionManager);
     w.show();
     return QApplication::exec();

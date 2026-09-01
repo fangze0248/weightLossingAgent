@@ -1,6 +1,7 @@
 #include "application/plangenerationservice.h"
 
 #include "interfaces/IExerciseRepository.h"
+#include "interfaces/IFeedbackService.h"
 #include "interfaces/IHealthCalculator.h"
 #include "interfaces/IPlanRepository.h"
 #include "interfaces/IRecipeRepository.h"
@@ -114,13 +115,15 @@ PlanGenerationService::PlanGenerationService(
     IRecipeRepository& recipeRepository,
     IPlanRepository& planRepository,
     IHealthCalculator& healthCalculator,
-    IWeeklyPlanner& weeklyPlanner)
+    IWeeklyPlanner& weeklyPlanner,
+    IFeedbackService& feedbackService)
     : userRepository_(userRepository),
       exerciseRepository_(exerciseRepository),
       recipeRepository_(recipeRepository),
       planRepository_(planRepository),
       healthCalculator_(healthCalculator),
-      weeklyPlanner_(weeklyPlanner)
+      weeklyPlanner_(weeklyPlanner),
+      feedbackService_(feedbackService)
 {
 }
 
@@ -178,13 +181,27 @@ ServiceResult<WeeklyPlan> PlanGenerationService::generateAndSave(
             recipeResult.warnings);
     }
 
+    // 生成新计划前，把历史享受度反馈汇总成偏好注入推荐选项；
+    // 汇总失败时保持空偏好，不阻断计划生成。
+    WeeklyPlanOptions effectiveOptions = options;
+    const auto recipePreference = feedbackService_.buildPreference(
+        normalizedUserId, RecommendationItemType::Recipe);
+    if (recipePreference.ok) {
+        effectiveOptions.mealOptions.preference = recipePreference.data;
+    }
+    const auto exercisePreference = feedbackService_.buildPreference(
+        normalizedUserId, RecommendationItemType::Exercise);
+    if (exercisePreference.ok) {
+        effectiveOptions.exerciseOptions.preference = exercisePreference.data;
+    }
+
     auto planResult = weeklyPlanner_.generate(
         *userResult.data,
         calorieResult.data,
         startDate,
         exerciseResult.data,
         recipeResult.data,
-        options);
+        effectiveOptions);
     planResult.warnings.append(calorieResult.warnings);
     if (!planResult.ok) {
         return planResult;

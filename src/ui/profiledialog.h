@@ -38,6 +38,7 @@ private:
     QLineEdit* idEdit_ = nullptr;
     QLineEdit* nameEdit_ = nullptr;
     QComboBox* genderCombo_ = nullptr;
+    QComboBox* exerciseGoalCombo_ = nullptr;
     QSpinBox* ageSpin_ = nullptr;
     QDoubleSpinBox* heightSpin_ = nullptr;
     QDoubleSpinBox* weightSpin_ = nullptr;

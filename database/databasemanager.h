@@ -26,7 +26,9 @@ private:
     static QString connectionName();
     bool executeStatement(const QString& sql, QString* errorMessage);
     bool ensureUserAverageDailyStepsColumn(QString* errorMessage);
+    bool ensureUserExerciseGoalColumn(QString* errorMessage);
     bool ensureRecipeNutritionColumns(QString* errorMessage);
+    bool ensureFeedbackColumns(QString* errorMessage);
     QString databasePath_;
     QSqlDatabase database_;
 };

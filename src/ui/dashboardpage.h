@@ -7,6 +7,7 @@
 #include <optional>
 
 class IHealthCalculator;
+class IFeedbackService;
 class IPlanRepository;
 class IUserRepository;
 class QLabel;
@@ -22,6 +23,7 @@ public:
     explicit DashboardPage(IUserRepository& userRepository,
                            IPlanRepository& planRepository,
                            IHealthCalculator& healthCalculator,
+                           IFeedbackService& feedbackService,
                            SessionManager& sessionManager,
                            QWidget* parent = nullptr);
 
@@ -42,6 +44,7 @@ private:
     IUserRepository& userRepository_;
     IPlanRepository& planRepository_;
     IHealthCalculator& healthCalculator_;
+    IFeedbackService& feedbackService_;
     SessionManager& sessionManager_;
     std::optional<UserProfile> currentUser_;
     std::optional<WeeklyPlan> currentPlan_;

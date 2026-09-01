@@ -97,12 +97,16 @@ set(PROJECT_SOURCES
         src/application/plangenerationservice.cpp
         src/application/plangenerationservice.h
         src/interfaces/IPlanGenerationService.h
+        src/services/FeedbackService.cpp
+        src/services/FeedbackService.h
         src/session/sessionmanager.cpp
         src/session/sessionmanager.h
         src/ui/appstyle.cpp
         src/ui/appstyle.h
         src/ui/dashboardpage.cpp
         src/ui/dashboardpage.h
+        src/ui/feedbackdialog.cpp
+        src/ui/feedbackdialog.h
         src/ui/exercisepage.cpp
         src/ui/exercisepage.h
         src/ui/healthpage.cpp
@@ -283,6 +287,36 @@ else()
     )
 endif()
 
+add_executable(feedback_service_test
+    tests/feedback_service_test.cpp
+    src/services/FeedbackService.cpp
+)
+
+target_include_directories(feedback_service_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+
+target_link_libraries(feedback_service_test PRIVATE
+    persistence_core
+    Qt${QT_VERSION_MAJOR}::Core
+    Qt${QT_VERSION_MAJOR}::Sql
+)
+
+if(WIN32)
+    add_test(
+        NAME feedback_service_test
+        COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt${QT_VERSION_MAJOR}::Core>;$ENV{PATH}"
+            $<TARGET_FILE:feedback_service_test>
+    )
+else()
+    add_test(
+        NAME feedback_service_test
+        COMMAND $<TARGET_FILE:feedback_service_test>
+    )
+endif()
+
 add_executable(recommendation_persistence_integration_test
     tests/recommendation_persistence_integration_test.cpp
 )
@@ -311,6 +345,7 @@ endif()
 add_executable(plan_generation_service_test
     tests/plan_generation_service_test.cpp
     src/application/plangenerationservice.cpp
+    src/services/FeedbackService.cpp
 )
 
 target_include_directories(plan_generation_service_test PRIVATE

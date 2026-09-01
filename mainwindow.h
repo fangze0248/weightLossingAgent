@@ -6,6 +6,7 @@
 class IExerciseRepository;
 class IDataExchangeService;
 class IHealthCalculator;
+class IFeedbackService;
 class IPlanRepository;
 class IPlanGenerationService;
 class IRecipeRepository;
@@ -24,6 +25,7 @@ public:
                         IDataExchangeService& dataExchangeService,
                         IUserRepository& userRepository,
                         IHealthCalculator& healthCalculator,
+                        IFeedbackService& feedbackService,
                         SessionManager& sessionManager,
                         QWidget *parent = nullptr);
     ~MainWindow() override;

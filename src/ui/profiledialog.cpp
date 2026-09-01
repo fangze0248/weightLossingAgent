@@ -47,6 +47,14 @@ ProfileDialog::ProfileDialog(IUserRepository& repository,
     genderCombo_->addItem(QStringLiteral("男"), static_cast<int>(Gender::Male));
     genderCombo_->addItem(QStringLiteral("女"), static_cast<int>(Gender::Female));
 
+    exerciseGoalCombo_ = new QComboBox(this);
+    exerciseGoalCombo_->addItem(
+        QStringLiteral("轻盈健康"), static_cast<int>(ExerciseGoal::LightHealth));
+    exerciseGoalCombo_->addItem(
+        QStringLiteral("强身健体"), static_cast<int>(ExerciseGoal::BuildFitness));
+    exerciseGoalCombo_->addItem(
+        QStringLiteral("增肌塑形"), static_cast<int>(ExerciseGoal::MuscleGain));
+
     ageSpin_ = new QSpinBox(this);
     ageSpin_->setRange(18, 100);
     ageSpin_->setValue(25);
@@ -105,6 +113,7 @@ ProfileDialog::ProfileDialog(IUserRepository& repository,
     formLayout->addRow(QStringLiteral("过去7天日均步数："),
                        averageDailyStepsSpin_);
     formLayout->addRow(QStringLiteral("每周减重目标："), weeklyGoalSpin_);
+    formLayout->addRow(QStringLiteral("运动目标："), exerciseGoalCombo_);
     formLayout->addRow(QStringLiteral("饮食贡献比例："), dietRatioSpin_);
 
     saveButton_ = new QPushButton(
@@ -138,6 +147,11 @@ void ProfileDialog::setUser(const UserProfile& user)
     nameEdit_->setText(user.name);
     const int genderIndex = genderCombo_->findData(static_cast<int>(user.gender));
     if (genderIndex >= 0) genderCombo_->setCurrentIndex(genderIndex);
+    const int exerciseGoalIndex =
+        exerciseGoalCombo_->findData(static_cast<int>(user.exerciseGoal));
+    if (exerciseGoalIndex >= 0) {
+        exerciseGoalCombo_->setCurrentIndex(exerciseGoalIndex);
+    }
     ageSpin_->setValue(user.age);
     heightSpin_->setValue(user.heightCm);
     weightSpin_->setValue(user.weightKg);
@@ -158,6 +172,8 @@ UserProfile ProfileDialog::buildUser() const
     user.id = idEdit_->text().trimmed();
     user.name = nameEdit_->text().trimmed();
     user.gender = static_cast<Gender>(genderCombo_->currentData().toInt());
+    user.exerciseGoal =
+        static_cast<ExerciseGoal>(exerciseGoalCombo_->currentData().toInt());
     user.age = ageSpin_->value();
     user.heightCm = heightSpin_->value();
     user.weightKg = weightSpin_->value();

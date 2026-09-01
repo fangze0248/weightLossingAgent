@@ -259,6 +259,69 @@ bool DatabaseManager::ensureUserAverageDailyStepsColumn(
         errorMessage);
 }
 
+bool DatabaseManager::ensureUserExerciseGoalColumn(QString* errorMessage)
+{
+    QSqlQuery query(database_);
+    if (!query.exec(QStringLiteral("PRAGMA table_info(users)"))) {
+        if (errorMessage) *errorMessage = query.lastError().text();
+        return false;
+    }
+
+    bool columnExists = false;
+    while (query.next()) {
+        if (query.value(1).toString() == QStringLiteral("exercise_goal")) {
+            columnExists = true;
+            break;
+        }
+    }
+    if (columnExists) return true;
+
+    // Existing users default to the lightest goal so old callers keep working.
+    return executeStatement(
+        QStringLiteral(
+            "ALTER TABLE users ADD COLUMN exercise_goal TEXT NOT NULL "
+            "DEFAULT 'light_health' "
+            "CHECK(exercise_goal IN ('light_health', 'build_fitness', 'muscle_gain'))"),
+        errorMessage);
+}
+
+bool DatabaseManager::ensureFeedbackColumns(QString* errorMessage)
+{
+    QSqlQuery query(database_);
+    if (!query.exec(QStringLiteral("PRAGMA table_info(feedback)"))) {
+        if (errorMessage) *errorMessage = query.lastError().text();
+        return false;
+    }
+
+    QSet<QString> existingColumns;
+    while (query.next()) {
+        existingColumns.insert(query.value(1).toString());
+    }
+
+    const QVector<QPair<QString, QString>> columns = {
+        {QStringLiteral("enjoyment_stars"),
+         QStringLiteral("INTEGER NOT NULL DEFAULT 0 "
+                        "CHECK(enjoyment_stars BETWEEN 0 AND 5)")},
+        {QStringLiteral("keywords_json"),
+         QStringLiteral("TEXT NOT NULL DEFAULT '[]'")},
+        {QStringLiteral("plan_id"),
+         QStringLiteral("TEXT NOT NULL DEFAULT ''")},
+        {QStringLiteral("feedback_date"),
+         QStringLiteral("TEXT NOT NULL DEFAULT ''")}
+    };
+
+    for (const auto& column : columns) {
+        if (existingColumns.contains(column.first)) continue;
+        if (!executeStatement(
+                QStringLiteral("ALTER TABLE feedback ADD COLUMN %1 %2")
+                    .arg(column.first, column.second),
+                errorMessage)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool DatabaseManager::initialize(QString* errorMessage)
 {
     if (!database_.isOpen()) {
@@ -282,6 +345,8 @@ bool DatabaseManager::initialize(QString* errorMessage)
                 CHECK(average_daily_steps BETWEEN 0 AND 50000),
                 activity_level INTEGER NOT NULL CHECK(activity_level BETWEEN 1 AND 5),
                 goal_type TEXT NOT NULL CHECK(goal_type IN ('lose', 'maintain', 'gain')),
+                exercise_goal TEXT NOT NULL DEFAULT 'light_health'
+                CHECK(exercise_goal IN ('light_health', 'build_fitness', 'muscle_gain')),
                 weekly_goal_kg REAL NOT NULL DEFAULT 0.5,
                 diet_contribution_ratio REAL NOT NULL DEFAULT 0.7,
                 disliked_exercise_ids_json TEXT NOT NULL DEFAULT '[]',
@@ -342,6 +407,11 @@ bool DatabaseManager::initialize(QString* errorMessage)
                 item_type TEXT NOT NULL CHECK(item_type IN ('exercise', 'recipe')),
                 item_id TEXT NOT NULL,
                 rating INTEGER NOT NULL CHECK(rating BETWEEN -1 AND 1),
+                enjoyment_stars INTEGER NOT NULL DEFAULT 0
+                CHECK(enjoyment_stars BETWEEN 0 AND 5),
+                keywords_json TEXT NOT NULL DEFAULT '[]',
+                plan_id TEXT NOT NULL DEFAULT '',
+                feedback_date TEXT NOT NULL DEFAULT '',
                 comment TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -370,6 +440,12 @@ bool DatabaseManager::initialize(QString* errorMessage)
         return false;
     }
     if (!ensureUserAverageDailyStepsColumn(errorMessage)) {
+        return false;
+    }
+    if (!ensureUserExerciseGoalColumn(errorMessage)) {
+        return false;
+    }
+    if (!ensureFeedbackColumns(errorMessage)) {
         return false;
     }
     const QStringList searchIndexes = {

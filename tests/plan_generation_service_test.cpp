@@ -3,9 +3,11 @@
 #include "recommendation/WeeklyPlanner.h"
 #include "recommendation/healthcalculator.h"
 #include "repositories/sqliteexerciserepository.h"
+#include "repositories/sqlitefeedbackrepository.h"
 #include "repositories/sqliteplanrepository.h"
 #include "repositories/sqlitereciperepository.h"
 #include "repositories/sqliteuserrepository.h"
+#include "services/FeedbackService.h"
 
 #include <QCoreApplication>
 #include <QDate>
@@ -29,6 +31,8 @@ int main(int argc, char* argv[])
     SqliteExerciseRepository exercises(manager.database());
     SqliteRecipeRepository recipes(manager.database());
     SqlitePlanRepository plans(manager.database());
+    SqliteFeedbackRepository feedbacks(manager.database());
+    FeedbackService feedbackService(feedbacks);
     HealthCalculator healthCalculator;
     WeeklyPlanner weeklyPlanner;
     PlanGenerationService service(users,
@@ -36,7 +40,8 @@ int main(int argc, char* argv[])
                                   recipes,
                                   plans,
                                   healthCalculator,
-                                  weeklyPlanner);
+                                  weeklyPlanner,
+                                  feedbackService);
 
     const auto result = service.generateAndSave(
         QStringLiteral("U001"), QDate(2026, 8, 24));
