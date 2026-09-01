@@ -496,5 +496,42 @@ int main()
         return 35;
     }
 
+    // 同目标、同 MET、同热量的候选中，历史星级对应的项目权重应打破平局。
+    Exercise feedbackLow = buildFitnessExercise;
+    feedbackLow.id = QStringLiteral("feedback-low");
+    Exercise feedbackHigh = buildFitnessExercise;
+    feedbackHigh.id = QStringLiteral("feedback-high");
+
+    ExerciseRecommendationOptions feedbackOptions = goalOptions;
+    feedbackOptions.preference.itemWeights.insert(
+        feedbackLow.id,
+        *feedbackWeightFromStars(1));
+    feedbackOptions.preference.itemWeights.insert(
+        feedbackHigh.id,
+        *feedbackWeightFromStars(5));
+    const auto feedbackResult = recommender.generate(
+        buildFitnessUser,
+        196.0,
+        {feedbackLow, feedbackHigh},
+        feedbackOptions);
+    if (!feedbackResult.ok
+        || feedbackResult.data.first().exerciseId
+            != QStringLiteral("feedback-high")) {
+        return 36;
+    }
+
+    ExerciseRecommendationOptions invalidPreferenceOptions = goalOptions;
+    invalidPreferenceOptions.preference.itemWeights.insert(
+        QStringLiteral("invalid-weight"),
+        std::numeric_limits<double>::quiet_NaN());
+    if (recommender.generate(
+            buildFitnessUser,
+            196.0,
+            goalDatabase,
+            invalidPreferenceOptions).code
+        != QStringLiteral("INVALID_OPTIONS")) {
+        return 37;
+    }
+
     return 0;
 }

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <limits>
 #include <optional>
 #include <utility>
 
@@ -25,6 +26,117 @@ bool isFinitePositive(double value)
 bool isFiniteNonNegative(double value)
 {
     return std::isfinite(value) && value >= 0.0;
+}
+
+bool isValidPreference(const RecommendationPreference& preference)
+{
+    for (auto it = preference.itemWeights.cbegin();
+         it != preference.itemWeights.cend();
+         ++it) {
+        if (it.key().trimmed().isEmpty()
+            || !isFiniteNonNegative(it.value())) {
+            return false;
+        }
+    }
+    for (auto it = preference.keywordWeights.cbegin();
+         it != preference.keywordWeights.cend();
+         ++it) {
+        if (it.key().trimmed().isEmpty() || !std::isfinite(it.value())) {
+            return false;
+        }
+    }
+    return true;
+}
+
+QString normalizedKeyword(const QString& value)
+{
+    return value.trimmed().toLower();
+}
+
+QHash<QString, double> buildRecipePreferenceScores(
+    const QVector<Recipe>& recipes,
+    const RecommendationPreference& preference)
+{
+    QHash<QString, double> scores;
+    if (!preference.hasSignals()) {
+        return scores;
+    }
+
+    QHash<QString, int> documentFrequencies;
+    for (const Recipe& recipe : recipes) {
+        QSet<QString> uniqueTags;
+        for (const QString& tag : recipe.nutritionTags) {
+            const QString normalized = normalizedKeyword(tag);
+            if (!normalized.isEmpty()) {
+                uniqueTags.insert(normalized);
+            }
+        }
+        for (const QString& tag : uniqueTags) {
+            documentFrequencies[tag] += 1;
+        }
+    }
+
+    const double documentCount = static_cast<double>(recipes.size());
+    QHash<QString, double> inverseDocumentFrequencies;
+    for (auto it = documentFrequencies.cbegin();
+         it != documentFrequencies.cend();
+         ++it) {
+        inverseDocumentFrequencies.insert(
+            it.key(),
+            std::log((documentCount + 1.0)
+                     / (static_cast<double>(it.value()) + 1.0))
+                + 1.0);
+    }
+
+    QHash<QString, double> userVector;
+    double userNormSquared = 0.0;
+    for (auto it = preference.keywordWeights.cbegin();
+         it != preference.keywordWeights.cend();
+         ++it) {
+        const QString keyword = normalizedKeyword(it.key());
+        if (!inverseDocumentFrequencies.contains(keyword)) {
+            continue;
+        }
+        const double value = it.value()
+            * inverseDocumentFrequencies.value(keyword);
+        userVector.insert(keyword, value);
+        userNormSquared += value * value;
+    }
+
+    for (const Recipe& recipe : recipes) {
+        const double itemScore =
+            preference.itemWeights.value(recipe.id, 1.0) - 1.0;
+        QSet<QString> uniqueTags;
+        for (const QString& tag : recipe.nutritionTags) {
+            const QString normalized = normalizedKeyword(tag);
+            if (!normalized.isEmpty()) {
+                uniqueTags.insert(normalized);
+            }
+        }
+
+        double tagSimilarity = 0.0;
+        if (!uniqueTags.isEmpty() && userNormSquared > kComparisonEpsilon) {
+            const double termFrequency = 1.0 / uniqueTags.size();
+            double dotProduct = 0.0;
+            double recipeNormSquared = 0.0;
+            for (const QString& tag : uniqueTags) {
+                const double recipeValue = termFrequency
+                    * inverseDocumentFrequencies.value(tag, 0.0);
+                recipeNormSquared += recipeValue * recipeValue;
+                dotProduct += recipeValue * userVector.value(tag, 0.0);
+            }
+            if (recipeNormSquared > kComparisonEpsilon) {
+                tagSimilarity = dotProduct
+                    / (std::sqrt(recipeNormSquared)
+                       * std::sqrt(userNormSquared));
+            }
+        }
+
+        // 单项目星级每颗星造成 0.2 的真实分差；标签相似度作为较温和的
+        // 辅助信号，避免压过明确的项目反馈。
+        scores.insert(recipe.id, itemScore + 0.4 * tagSimilarity);
+    }
+    return scores;
 }
 
 double normalizedNutritionValue(double value)
@@ -382,10 +494,34 @@ double macroDifference(
         : totalRelativeDifference / activeTargets;
 }
 
+double mealPlanPreferenceScore(
+    const MealPlan& plan,
+    const QHash<QString, double>& recipeScores)
+{
+    if (recipeScores.isEmpty()) {
+        return 0.0;
+    }
+
+    double totalScore = 0.0;
+    int itemCount = 0;
+    const auto addItems = [&](const QVector<MealPlanItem>& items) {
+        for (const MealPlanItem& item : items) {
+            totalScore += recipeScores.value(item.recipeId, 0.0);
+            ++itemCount;
+        }
+    };
+    addItems(plan.breakfast);
+    addItems(plan.lunch);
+    addItems(plan.dinner);
+    addItems(plan.snacks);
+    return itemCount == 0 ? 0.0 : totalScore / itemCount;
+}
+
 struct ScoredMealPlan {
     MealPlan plan;
     double ratioDifference = 0.0;
     double macroDifference = 0.0;
+    double preferenceScore = 0.0;
     double dailyDifference = 0.0;
 };
 
@@ -402,19 +538,27 @@ bool isBetterPlanScore(
                 || (std::abs(candidate.macroDifference
                                 - current.macroDifference)
                         <= kComparisonEpsilon
-                    && (candidate.dailyDifference
-                            < current.dailyDifference - kComparisonEpsilon
-                        || (std::abs(candidate.dailyDifference
-                                        - current.dailyDifference)
+                    && (candidate.preferenceScore
+                            > current.preferenceScore + kComparisonEpsilon
+                        || (std::abs(candidate.preferenceScore
+                                        - current.preferenceScore)
                                 <= kComparisonEpsilon
-                            && mealPlanItemCount(candidate.plan)
-                                < mealPlanItemCount(current.plan))))));
+                            && (candidate.dailyDifference
+                                    < current.dailyDifference
+                                        - kComparisonEpsilon
+                                || (std::abs(candidate.dailyDifference
+                                                - current.dailyDifference)
+                                        <= kComparisonEpsilon
+                                    && mealPlanItemCount(candidate.plan)
+                                        < mealPlanItemCount(
+                                            current.plan))))))));
 }
 
 std::optional<MealPlan> findBestMultiRecipePlan(
     const RecipesByMealType& groupedRecipes,
     double targetCalories,
     const MealRecommendationOptions& options,
+    const QHash<QString, double>& recipePreferenceScores,
     QRandomGenerator* randomGenerator)
 {
     QVector<QVector<MealChoice>> choicesByEnabledMeal;
@@ -455,6 +599,7 @@ std::optional<MealPlan> findBestMultiRecipePlan(
     std::optional<MealPlan> bestPlan;
     double bestRatioDifference = 0.0;
     double bestMacroDifference = 0.0;
+    double bestPreferenceScore = 0.0;
     double bestDailyDifference = 0.0;
     QVector<ScoredMealPlan> randomPlanPool;
     QVector<MealChoice> currentChoices;
@@ -488,12 +633,17 @@ std::optional<MealPlan> findBestMultiRecipePlan(
                           candidate.totalNutrition,
                           *options.nutritionTarget)
                     : 0.0;
+                const double candidatePreferenceScore =
+                    mealPlanPreferenceScore(
+                        candidate,
+                        recipePreferenceScores);
 
                 if (randomGenerator != nullptr) {
                     randomPlanPool.append({
                         std::move(candidate),
                         ratioDifference,
                         candidateMacroDifference,
+                        candidatePreferenceScore,
                         dailyDifference});
                     std::stable_sort(
                         randomPlanPool.begin(),
@@ -516,20 +666,27 @@ std::optional<MealPlan> findBestMultiRecipePlan(
                             || (std::abs(candidateMacroDifference
                                             - bestMacroDifference)
                                     <= kComparisonEpsilon
-                                && (dailyDifference
-                                        < bestDailyDifference
-                                            - kComparisonEpsilon
-                                    || (std::abs(dailyDifference
-                                                    - bestDailyDifference)
+                                && (candidatePreferenceScore
+                                        > bestPreferenceScore
+                                            + kComparisonEpsilon
+                                    || (std::abs(candidatePreferenceScore
+                                                    - bestPreferenceScore)
                                             <= kComparisonEpsilon
-                                        && mealPlanItemCount(candidate)
-                                            < mealPlanItemCount(
-                                                *bestPlan))))));
+                                        && (dailyDifference
+                                                < bestDailyDifference
+                                                    - kComparisonEpsilon
+                                            || (std::abs(dailyDifference
+                                                            - bestDailyDifference)
+                                                    <= kComparisonEpsilon
+                                                && mealPlanItemCount(candidate)
+                                                    < mealPlanItemCount(
+                                                        *bestPlan))))))));
 
                 if (isBetter) {
                     bestPlan = std::move(candidate);
                     bestRatioDifference = ratioDifference;
                     bestMacroDifference = candidateMacroDifference;
+                    bestPreferenceScore = candidatePreferenceScore;
                     bestDailyDifference = dailyDifference;
                 }
                 return;
@@ -621,14 +778,16 @@ ServiceResult<MealPlan> MealRecommender::generate(
         || invalidRatioTotal
         || invalidSnackOptions
         || invalidItemCount
-        || invalidNutritionTarget) {
+        || invalidNutritionTarget
+        || !isValidPreference(options.preference)) {
         return ServiceResult<MealPlan>::failure(
             QStringLiteral("INVALID_OPTIONS"),
             QStringLiteral(
                 "食谱推荐选项不合法：容差必须为 0～10%，各餐比例必须为"
                 "非负有限数且合计为 1，加餐开关必须与加餐比例一致，"
                 "每餐最大项目数必须为 1～2；营养目标中的蛋白质、碳水和"
-                "脂肪必须为非负有限数，且至少一项大于 0。"));
+                "脂肪必须为非负有限数，且至少一项大于 0；反馈偏好中的"
+                "项目权重必须为非负有限数，关键词权重必须为有限数。"));
     }
 
     const QVector<Recipe> eligibleRecipes = filterEligibleRecipes(
@@ -646,6 +805,10 @@ ServiceResult<MealPlan> MealRecommender::generate(
 
     const RecipesByMealType groupedRecipes =
         groupRecipesByMealType(eligibleRecipes);
+    const QHash<QString, double> recipePreferenceScores =
+        buildRecipePreferenceScores(
+            eligibleRecipes,
+            options.preference);
     const QStringList missingMealTypes = findMissingRequiredMealTypes(
         groupedRecipes,
         options);
@@ -714,7 +877,8 @@ ServiceResult<MealPlan> MealRecommender::generate(
             <= maximumDailyCalories + kComparisonEpsilon;
 
     if (dailyCaloriesWithinTolerance
-        && !options.nutritionTarget.has_value()) {
+        && !options.nutritionTarget.has_value()
+        && !options.preference.hasSignals()) {
         return ServiceResult<MealPlan>::success(
             std::move(singleRecipePlan),
             QStringLiteral("已生成每餐一份食谱的每日膳食计划。"));
@@ -725,6 +889,7 @@ ServiceResult<MealPlan> MealRecommender::generate(
             groupedRecipes,
             targetCalories,
             options,
+            recipePreferenceScores,
             generator);
 
     if (bestMultiRecipePlan.has_value()) {

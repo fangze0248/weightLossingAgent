@@ -2,6 +2,7 @@
 
 #include "../contracts/ServiceResult.h"
 #include "../models/PlanModels.h"
+#include "../models/RecommendationPreference.h"
 #include "../models/Recipe.h"
 #include "../models/UserProfile.h"
 
@@ -20,6 +21,7 @@ struct MealRecommendationOptions {
     int maximumItemsPerMeal = 2;
     bool includeSnack = false;
     std::optional<quint32> randomSeed;
+    RecommendationPreference preference;
     // 可选的全天三大营养素目标。未提供时，推荐逻辑保持只按热量与餐次比例排序。
     std::optional<NutritionFacts> nutritionTarget;
 };

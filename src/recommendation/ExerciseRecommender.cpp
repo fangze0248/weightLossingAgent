@@ -23,6 +23,27 @@ bool isFinitePositive(double value)
     return std::isfinite(value) && value > 0.0;
 }
 
+bool isValidPreference(const RecommendationPreference& preference)
+{
+    for (auto it = preference.itemWeights.cbegin();
+         it != preference.itemWeights.cend();
+         ++it) {
+        if (it.key().trimmed().isEmpty()
+            || !std::isfinite(it.value())
+            || it.value() < 0.0) {
+            return false;
+        }
+    }
+    for (auto it = preference.keywordWeights.cbegin();
+         it != preference.keywordWeights.cend();
+         ++it) {
+        if (it.key().trimmed().isEmpty() || !std::isfinite(it.value())) {
+            return false;
+        }
+    }
+    return true;
+}
+
 QVector<Exercise> filterEligibleExercises(
     const UserProfile& user,
     const QVector<Exercise>& exerciseDatabase,
@@ -78,7 +99,8 @@ double calculateCaloriesBurned(
 
 double exerciseGoalPenalty(
     const Exercise& exercise,
-    ExerciseGoal goal)
+    ExerciseGoal goal,
+    const RecommendationPreference& preference)
 {
     // 这是推荐偏好分，不是医学强度判定。分数越小越符合用户目标；
     // 热量范围、不喜欢项目和时长上限仍由原有硬约束负责。
@@ -114,7 +136,9 @@ double exerciseGoalPenalty(
         intensityPenalty = exercise.metValue - preferredMaximumMet;
     }
 
-    return categoryPenalty + intensityPenalty;
+    const double feedbackAdjustment =
+        preference.itemWeights.value(exercise.id, 1.0) - 1.0;
+    return categoryPenalty + intensityPenalty - feedbackAdjustment;
 }
 
 std::optional<ExercisePlanItem> findBestSingleExercise(
@@ -153,7 +177,8 @@ std::optional<ExercisePlanItem> findBestSingleExercise(
                 candidate.caloriesBurned = calories;
                 const double candidateGoalPenalty = exerciseGoalPenalty(
                     exercise,
-                    goal);
+                    goal,
+                    options.preference);
 
                 // 所有候选都已满足硬约束；先按运动目标排序，再比较热量
                 // 偏差与时长。
@@ -289,8 +314,14 @@ std::optional<QVector<ExercisePlanItem>> findBestTwoExercises(
                             firstItem,
                             secondItem};
                         const double candidateGoalPenalty =
-                            (exerciseGoalPenalty(firstExercise, goal)
-                             + exerciseGoalPenalty(secondExercise, goal))
+                            (exerciseGoalPenalty(
+                                 firstExercise,
+                                 goal,
+                                 options.preference)
+                             + exerciseGoalPenalty(
+                                 secondExercise,
+                                 goal,
+                                 options.preference))
                             / 2.0;
 
                         const double bestCalories = bestPlan.has_value()
@@ -433,9 +464,18 @@ std::optional<QVector<ExercisePlanItem>> findBestThreeExercises(
                                     secondItem,
                                     thirdItem};
                                 const double candidateGoalPenalty =
-                                    (exerciseGoalPenalty(firstExercise, goal)
-                                     + exerciseGoalPenalty(secondExercise, goal)
-                                     + exerciseGoalPenalty(thirdExercise, goal))
+                                    (exerciseGoalPenalty(
+                                         firstExercise,
+                                         goal,
+                                         options.preference)
+                                     + exerciseGoalPenalty(
+                                         secondExercise,
+                                         goal,
+                                         options.preference)
+                                     + exerciseGoalPenalty(
+                                         thirdExercise,
+                                         goal,
+                                         options.preference))
                                     / 3.0;
                                 const double bestCalories = bestPlan.has_value()
                                     ? totalCaloriesOf(*bestPlan)
@@ -499,13 +539,17 @@ std::optional<QVector<ExercisePlanItem>> findBestThreeExercises(
 double goalPenaltyOfPlan(
     const QVector<ExercisePlanItem>& plan,
     const QVector<Exercise>& eligibleExercises,
-    ExerciseGoal goal)
+    ExerciseGoal goal,
+    const RecommendationPreference& preference)
 {
     double totalPenalty = 0.0;
     for (const ExercisePlanItem& item : plan) {
         for (const Exercise& exercise : eligibleExercises) {
             if (exercise.id == item.exerciseId) {
-                totalPenalty += exerciseGoalPenalty(exercise, goal);
+                totalPenalty += exerciseGoalPenalty(
+                    exercise,
+                    goal,
+                    preference);
                 break;
             }
         }
@@ -517,16 +561,19 @@ bool isBetterPlan(
     const QVector<ExercisePlanItem>& candidate,
     const QVector<ExercisePlanItem>& currentBest,
     const QVector<Exercise>& eligibleExercises,
-    ExerciseGoal goal)
+    ExerciseGoal goal,
+    const RecommendationPreference& preference)
 {
     const double candidateGoalPenalty = goalPenaltyOfPlan(
         candidate,
         eligibleExercises,
-        goal);
+        goal,
+        preference);
     const double bestGoalPenalty = goalPenaltyOfPlan(
         currentBest,
         eligibleExercises,
-        goal);
+        goal,
+        preference);
     const double candidateCalories = totalCaloriesOf(candidate);
     const double bestCalories = totalCaloriesOf(currentBest);
 
@@ -587,7 +634,10 @@ ServiceResult<QVector<ExercisePlanItem>> ExerciseRecommender::generate(
         || options.upperToleranceRatio
             > kMaximumAllowedToleranceRatio + kComparisonEpsilon;
 
-    if (invalidDurationOptions || invalidItemCount || invalidTolerance) {
+    if (invalidDurationOptions
+        || invalidItemCount
+        || invalidTolerance
+        || !isValidPreference(options.preference)) {
         return ServiceResult<QVector<ExercisePlanItem>>::failure(
             QStringLiteral("INVALID_OPTIONS"),
             QStringLiteral(
@@ -638,7 +688,8 @@ ServiceResult<QVector<ExercisePlanItem>> ExerciseRecommender::generate(
                 candidate,
                 *bestPlan,
                 eligibleExercises,
-                user.exerciseGoal)) {
+                user.exerciseGoal,
+                options.preference)) {
             bestPlan = candidate;
         }
     };

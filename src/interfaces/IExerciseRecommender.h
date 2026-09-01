@@ -3,6 +3,7 @@
 #include "../contracts/ServiceResult.h"
 #include "../models/Exercise.h"
 #include "../models/PlanModels.h"
+#include "../models/RecommendationPreference.h"
 #include "../models/UserProfile.h"
 
 #include <QStringList>
@@ -18,6 +19,7 @@ struct ExerciseRecommendationOptions {
     int maximumExerciseItems = 3;
     double upperToleranceRatio = 0.10;
     std::optional<quint32> randomSeed;
+    RecommendationPreference preference;
 };
 
 class IExerciseRecommender {

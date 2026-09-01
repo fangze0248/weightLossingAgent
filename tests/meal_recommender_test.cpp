@@ -643,5 +643,72 @@ int main()
         return 38;
     }
 
+    // 热量和营养条件相同的候选中，历史星级换算出的项目权重应影响选择。
+    Recipe feedbackBreakfastLow = randomBreakfastA;
+    feedbackBreakfastLow.id = QStringLiteral("feedback-breakfast-low");
+    Recipe feedbackBreakfastHigh = randomBreakfastB;
+    feedbackBreakfastHigh.id = QStringLiteral("feedback-breakfast-high");
+
+    MealRecommendationOptions feedbackOptions = options;
+    feedbackOptions.maximumItemsPerMeal = 1;
+    feedbackOptions.preference.itemWeights.insert(
+        feedbackBreakfastLow.id,
+        *feedbackWeightFromStars(1));
+    feedbackOptions.preference.itemWeights.insert(
+        feedbackBreakfastHigh.id,
+        *feedbackWeightFromStars(5));
+
+    const auto feedbackResult = recommender.generate(
+        user,
+        1000.0,
+        {feedbackBreakfastLow,
+         feedbackBreakfastHigh,
+         randomLunchA,
+         randomDinnerA},
+        feedbackOptions);
+    if (!feedbackResult.ok
+        || feedbackResult.data.breakfast.first().recipeId
+            != QStringLiteral("feedback-breakfast-high")) {
+        return 39;
+    }
+
+    // 对已有 nutritionTags 的食谱计算 TF-IDF 相似度；同等硬约束下，
+    // 与用户偏好关键词匹配的食谱应优先。
+    Recipe mildBreakfast = randomBreakfastA;
+    mildBreakfast.id = QStringLiteral("tag-mild-breakfast");
+    mildBreakfast.nutritionTags = {QStringLiteral("清淡")};
+    Recipe spicyBreakfast = randomBreakfastB;
+    spicyBreakfast.id = QStringLiteral("tag-spicy-breakfast");
+    spicyBreakfast.nutritionTags = {QStringLiteral("香辣")};
+
+    MealRecommendationOptions tagOptions = options;
+    tagOptions.maximumItemsPerMeal = 1;
+    tagOptions.preference.keywordWeights.insert(
+        QStringLiteral(" 香辣 "),
+        1.0);
+    const auto tagResult = recommender.generate(
+        user,
+        1000.0,
+        {mildBreakfast, spicyBreakfast, randomLunchA, randomDinnerA},
+        tagOptions);
+    if (!tagResult.ok
+        || tagResult.data.breakfast.first().recipeId
+            != QStringLiteral("tag-spicy-breakfast")) {
+        return 40;
+    }
+
+    MealRecommendationOptions invalidPreferenceOptions = options;
+    invalidPreferenceOptions.preference.itemWeights.insert(
+        QStringLiteral("invalid-weight"),
+        std::numeric_limits<double>::quiet_NaN());
+    if (recommender.generate(
+            user,
+            1000.0,
+            randomDatabase,
+            invalidPreferenceOptions).code
+        != QStringLiteral("INVALID_OPTIONS")) {
+        return 41;
+    }
+
     return 0;
 }
