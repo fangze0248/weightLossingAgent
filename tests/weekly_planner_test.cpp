@@ -1,5 +1,7 @@
 #include "recommendation/WeeklyPlanner.h"
 
+#include <QSet>
+
 #include <cmath>
 #include <limits>
 
@@ -25,6 +27,10 @@ int main()
         return 26;
     }
 
+    if (!options.autoCalculateNutritionTarget) {
+        return 35;
+    }
+
     // 既有测试聚焦原来的固定目标路径；波动行为在文件末尾单独验证。
     WeeklyPlanOptions fixedTargetOptions = options;
     fixedTargetOptions.dailyTargetVariationRatio = 0.0;
@@ -33,6 +39,7 @@ int main()
 
     UserProfile user;
     user.id = QStringLiteral("user-1");
+    user.heightCm = 165.0;
     user.weightKg = 70.0;
 
     CalorieNeed calorieNeed;
@@ -431,6 +438,238 @@ int main()
             recipes,
             invalidVariation).code != QStringLiteral("INVALID_OPTIONS")) {
         return 31;
+    }
+
+    // 周种子会为每天派生不同的食谱种子；同一种子可复现，换种子可产生
+    // 不同菜单，同时继续满足周计划的热量约束。
+    WeeklyPlanOptions seededMenuOptions = fixedTargetOptions;
+    seededMenuOptions.avoidConsecutiveDuplicateExercises = false;
+    seededMenuOptions.avoidConsecutiveDuplicateRecipes = false;
+    seededMenuOptions.randomSeed = 2468;
+    const QVector<Recipe> variedRecipes{
+        recipe,
+        secondBreakfast,
+        lunchRecipe,
+        secondLunch,
+        dinnerRecipe,
+        secondDinner};
+
+    const auto weeklyMenuSignature = [](const WeeklyPlan& plan) {
+        QStringList ids;
+        for (const DailyPlan& day : plan.days) {
+            ids.append(day.meals.breakfast.first().recipeId);
+            ids.append(day.meals.lunch.first().recipeId);
+            ids.append(day.meals.dinner.first().recipeId);
+        }
+        return ids.join(QLatin1Char('|'));
+    };
+
+    const auto seededWeeklyResult = planner.generate(
+        user,
+        calorieNeed,
+        validStartDate,
+        {exercise},
+        variedRecipes,
+        seededMenuOptions);
+    const auto repeatedSeededWeeklyResult = planner.generate(
+        user,
+        calorieNeed,
+        validStartDate,
+        {exercise},
+        variedRecipes,
+        seededMenuOptions);
+    if (!seededWeeklyResult.ok
+        || !repeatedSeededWeeklyResult.ok
+        || weeklyMenuSignature(seededWeeklyResult.data)
+            != weeklyMenuSignature(repeatedSeededWeeklyResult.data)) {
+        return 32;
+    }
+
+    QSet<QString> generatedWeeklyMenus;
+    for (quint32 seed = 1; seed <= 12; ++seed) {
+        seededMenuOptions.randomSeed = seed;
+        const auto menuResult = planner.generate(
+            user,
+            calorieNeed,
+            validStartDate,
+            {exercise},
+            variedRecipes,
+            seededMenuOptions);
+        if (!menuResult.ok) {
+            return 33;
+        }
+        generatedWeeklyMenus.insert(weeklyMenuSignature(menuResult.data));
+    }
+    if (generatedWeeklyMenus.size() < 2) {
+        return 34;
+    }
+
+    // 自动营养目标按当天 1000 kcal 计算为：蛋白质 50 g、碳水
+    // 125 g、脂肪约 33.33 g。下面为每餐提供热量相同但营养组成不同的
+    // 两个候选，验证推荐结果真正受自动营养目标影响。
+    CalorieNeed macroCalorieNeed;
+    macroCalorieNeed.recommendedIntake = 1000.0;
+    macroCalorieNeed.exerciseTarget = 196.0;
+
+    Recipe macroBreakfastLow;
+    macroBreakfastLow.id = QStringLiteral("macro-breakfast-low");
+    macroBreakfastLow.name = QStringLiteral("低营养早餐");
+    macroBreakfastLow.totalCalories = 300.0;
+    macroBreakfastLow.mealType = MealType::Breakfast;
+    macroBreakfastLow.nutritionPerServing.proteinG = 1.0;
+    macroBreakfastLow.nutritionPerServing.carbohydrateG = 1.0;
+    macroBreakfastLow.nutritionPerServing.fatG = 1.0;
+
+    Recipe macroBreakfastTarget = macroBreakfastLow;
+    macroBreakfastTarget.id = QStringLiteral("macro-breakfast-target");
+    macroBreakfastTarget.name = QStringLiteral("目标早餐");
+    macroBreakfastTarget.nutritionPerServing.proteinG = 15.0;
+    macroBreakfastTarget.nutritionPerServing.carbohydrateG = 37.5;
+    macroBreakfastTarget.nutritionPerServing.fatG = 10.0;
+
+    Recipe macroLunchLow = macroBreakfastLow;
+    macroLunchLow.id = QStringLiteral("macro-lunch-low");
+    macroLunchLow.name = QStringLiteral("低营养午餐");
+    macroLunchLow.totalCalories = 400.0;
+    macroLunchLow.mealType = MealType::Lunch;
+
+    Recipe macroLunchTarget = macroLunchLow;
+    macroLunchTarget.id = QStringLiteral("macro-lunch-target");
+    macroLunchTarget.name = QStringLiteral("目标午餐");
+    macroLunchTarget.nutritionPerServing.proteinG = 20.0;
+    macroLunchTarget.nutritionPerServing.carbohydrateG = 50.0;
+    macroLunchTarget.nutritionPerServing.fatG = 40.0 / 3.0;
+
+    Recipe macroDinnerLow = macroBreakfastLow;
+    macroDinnerLow.id = QStringLiteral("macro-dinner-low");
+    macroDinnerLow.name = QStringLiteral("低营养晚餐");
+    macroDinnerLow.mealType = MealType::Dinner;
+
+    Recipe macroDinnerTarget = macroDinnerLow;
+    macroDinnerTarget.id = QStringLiteral("macro-dinner-target");
+    macroDinnerTarget.name = QStringLiteral("目标晚餐");
+    macroDinnerTarget.nutritionPerServing.proteinG = 15.0;
+    macroDinnerTarget.nutritionPerServing.carbohydrateG = 37.5;
+    macroDinnerTarget.nutritionPerServing.fatG = 10.0;
+
+    const QVector<Recipe> macroRecipes{
+        macroBreakfastLow,
+        macroBreakfastTarget,
+        macroLunchLow,
+        macroLunchTarget,
+        macroDinnerLow,
+        macroDinnerTarget};
+
+    WeeklyPlanOptions macroOptions = fixedTargetOptions;
+    macroOptions.avoidConsecutiveDuplicateExercises = false;
+    macroOptions.avoidConsecutiveDuplicateRecipes = false;
+    macroOptions.mealOptions.maximumItemsPerMeal = 1;
+    const auto automaticMacroResult = planner.generate(
+        user,
+        macroCalorieNeed,
+        validStartDate,
+        {exercise},
+        macroRecipes,
+        macroOptions);
+    if (!automaticMacroResult.ok
+        || automaticMacroResult.data.days.first()
+               .meals.breakfast.first().recipeId
+            != QStringLiteral("macro-breakfast-target")
+        || automaticMacroResult.data.days.first()
+               .meals.lunch.first().recipeId
+            != QStringLiteral("macro-lunch-target")
+        || automaticMacroResult.data.days.first()
+               .meals.dinner.first().recipeId
+            != QStringLiteral("macro-dinner-target")) {
+        return 36;
+    }
+
+    // 显式营养目标优先于自动计算。
+    NutritionFacts manualTarget;
+    manualTarget.proteinG = 3.0;
+    manualTarget.carbohydrateG = 3.0;
+    manualTarget.fatG = 3.0;
+    WeeklyPlanOptions manualMacroOptions = macroOptions;
+    manualMacroOptions.mealOptions.nutritionTarget = manualTarget;
+    const auto manualMacroResult = planner.generate(
+        user,
+        macroCalorieNeed,
+        validStartDate,
+        {exercise},
+        macroRecipes,
+        manualMacroOptions);
+    if (!manualMacroResult.ok
+        || manualMacroResult.data.days.first()
+               .meals.breakfast.first().recipeId
+            != QStringLiteral("macro-breakfast-low")
+        || manualMacroResult.data.days.first()
+               .meals.lunch.first().recipeId
+            != QStringLiteral("macro-lunch-low")
+        || manualMacroResult.data.days.first()
+               .meals.dinner.first().recipeId
+            != QStringLiteral("macro-dinner-low")) {
+        return 37;
+    }
+
+    // 允许调用方关闭自动目标；此时同热量候选保持原有排序行为。
+    WeeklyPlanOptions noAutomaticMacroOptions = macroOptions;
+    noAutomaticMacroOptions.autoCalculateNutritionTarget = false;
+    const auto noAutomaticMacroResult = planner.generate(
+        user,
+        macroCalorieNeed,
+        validStartDate,
+        {exercise},
+        macroRecipes,
+        noAutomaticMacroOptions);
+    if (!noAutomaticMacroResult.ok
+        || noAutomaticMacroResult.data.days.first()
+               .meals.breakfast.first().recipeId
+            != QStringLiteral("macro-breakfast-low")) {
+        return 38;
+    }
+
+    UserProfile underweightUser = user;
+    underweightUser.weightKg = 45.0;
+    underweightUser.heightCm = 170.0;
+    if (planner.generate(
+            underweightUser,
+            macroCalorieNeed,
+            validStartDate,
+            {exercise},
+            macroRecipes,
+            macroOptions).code
+        != QStringLiteral("WEIGHT_LOSS_NOT_RECOMMENDED")) {
+        return 39;
+    }
+
+    UserProfile unsafeTargetUser = user;
+    unsafeTargetUser.targetWeightKg = 45.0;
+    if (planner.generate(
+            unsafeTargetUser,
+            macroCalorieNeed,
+            validStartDate,
+            {exercise},
+            macroRecipes,
+            macroOptions).code
+        != QStringLiteral("UNSAFE_TARGET_WEIGHT")) {
+        return 40;
+    }
+
+    UserProfile normalBmiUser = user;
+    normalBmiUser.weightKg = 60.0;
+    normalBmiUser.heightCm = 170.0;
+    const auto normalBmiResult = planner.generate(
+        normalBmiUser,
+        macroCalorieNeed,
+        validStartDate,
+        {exercise},
+        macroRecipes,
+        macroOptions);
+    if (!normalBmiResult.ok
+        || normalBmiResult.warnings.isEmpty()
+        || !normalBmiResult.warnings.first().contains(
+            QStringLiteral("BMI"))) {
+        return 41;
     }
 
     return 0;

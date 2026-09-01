@@ -1,5 +1,7 @@
 #include "recommendation/MealRecommender.h"
 
+#include <QSet>
+
 #include <cmath>
 #include <limits>
 
@@ -574,6 +576,71 @@ int main()
             invalidMacroOptions).code
         != QStringLiteral("INVALID_OPTIONS")) {
         return 35;
+    }
+
+    // 提供随机种子时，只在优质候选中增加多样性；同一种子必须可复现。
+    Recipe randomBreakfastA = breakfast;
+    randomBreakfastA.id = QStringLiteral("random-breakfast-a");
+    randomBreakfastA.totalCalories = 300.0;
+    Recipe randomBreakfastB = randomBreakfastA;
+    randomBreakfastB.id = QStringLiteral("random-breakfast-b");
+
+    Recipe randomLunchA = lunch;
+    randomLunchA.id = QStringLiteral("random-lunch-a");
+    randomLunchA.totalCalories = 400.0;
+    Recipe randomLunchB = randomLunchA;
+    randomLunchB.id = QStringLiteral("random-lunch-b");
+
+    Recipe randomDinnerA = dinner;
+    randomDinnerA.id = QStringLiteral("random-dinner-a");
+    randomDinnerA.totalCalories = 300.0;
+    Recipe randomDinnerB = randomDinnerA;
+    randomDinnerB.id = QStringLiteral("random-dinner-b");
+
+    const QVector<Recipe> randomDatabase{
+        randomBreakfastA,
+        randomBreakfastB,
+        randomLunchA,
+        randomLunchB,
+        randomDinnerA,
+        randomDinnerB};
+    MealRecommendationOptions randomOptions = options;
+    randomOptions.maximumItemsPerMeal = 1;
+    randomOptions.randomSeed = 12345;
+
+    const auto seededResult = recommender.generate(
+        user, 1000.0, randomDatabase, randomOptions);
+    const auto repeatedSeededResult = recommender.generate(
+        user, 1000.0, randomDatabase, randomOptions);
+    const auto signatureOf = [](const MealPlan& plan) {
+        return plan.breakfast.first().recipeId
+            + QLatin1Char('|')
+            + plan.lunch.first().recipeId
+            + QLatin1Char('|')
+            + plan.dinner.first().recipeId;
+    };
+
+    if (!seededResult.ok
+        || !repeatedSeededResult.ok
+        || signatureOf(seededResult.data)
+            != signatureOf(repeatedSeededResult.data)
+        || std::abs(seededResult.data.totalCalories - 1000.0) > 1e-9) {
+        return 36;
+    }
+
+    QSet<QString> generatedMenus;
+    for (quint32 seed = 1; seed <= 16; ++seed) {
+        randomOptions.randomSeed = seed;
+        const auto variedResult = recommender.generate(
+            user, 1000.0, randomDatabase, randomOptions);
+        if (!variedResult.ok
+            || std::abs(variedResult.data.totalCalories - 1000.0) > 1e-9) {
+            return 37;
+        }
+        generatedMenus.insert(signatureOf(variedResult.data));
+    }
+    if (generatedMenus.size() < 2) {
+        return 38;
     }
 
     return 0;

@@ -17,6 +17,9 @@ struct WeeklyPlanOptions {
     int numberOfDays = 7;
     bool avoidConsecutiveDuplicateExercises = true;
     bool avoidConsecutiveDuplicateRecipes = true;
+    // 未显式提供营养目标时，按普通成年减重方案自动计算：
+    // 蛋白质 20%、碳水 50%、脂肪 30%。
+    bool autoCalculateNutritionTarget = true;
     // 单日摄入与运动目标的最大波动比例；七天平均目标保持不变。
     double dailyTargetVariationRatio = 0.10;
     std::optional<quint32> randomSeed;

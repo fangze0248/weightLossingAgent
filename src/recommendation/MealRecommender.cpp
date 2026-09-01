@@ -1,7 +1,9 @@
 #include "recommendation/MealRecommender.h"
 
+#include <QRandomGenerator>
 #include <QSet>
 
+#include <algorithm>
 #include <cmath>
 #include <functional>
 #include <optional>
@@ -12,6 +14,8 @@ namespace {
 constexpr double kMaximumAllowedToleranceRatio = 0.10;
 constexpr double kComparisonEpsilon = 1e-9;
 constexpr int kMaximumSupportedItemsPerMeal = 2;
+constexpr int kRandomSingleRecipePoolSize = 3;
+constexpr int kRandomPlanPoolSize = 5;
 
 bool isFinitePositive(double value)
 {
@@ -176,8 +180,41 @@ MealPlanItem makeMealPlanItem(const Recipe& recipe)
 
 std::optional<MealPlanItem> selectClosestSingleRecipe(
     const QVector<Recipe>& candidates,
-    double mealTargetCalories)
+    double mealTargetCalories,
+    QRandomGenerator* randomGenerator)
 {
+    if (randomGenerator != nullptr) {
+        QVector<const Recipe*> rankedCandidates;
+        rankedCandidates.reserve(candidates.size());
+        for (const Recipe& recipe : candidates) {
+            rankedCandidates.append(&recipe);
+        }
+
+        // 先按原有质量规则排序，再只在最接近目标的少量候选中随机选择，
+        // 既增加菜单变化，也避免随机到明显偏离餐次目标的食谱。
+        std::stable_sort(
+            rankedCandidates.begin(),
+            rankedCandidates.end(),
+            [mealTargetCalories](const Recipe* left, const Recipe* right) {
+                const double leftDifference =
+                    std::abs(left->totalCalories - mealTargetCalories);
+                const double rightDifference =
+                    std::abs(right->totalCalories - mealTargetCalories);
+                if (std::abs(leftDifference - rightDifference)
+                    > kComparisonEpsilon) {
+                    return leftDifference < rightDifference;
+                }
+                return left->totalCalories
+                    < right->totalCalories - kComparisonEpsilon;
+            });
+
+        const int poolSize = std::min(
+            kRandomSingleRecipePoolSize,
+            static_cast<int>(rankedCandidates.size()));
+        const int selectedIndex = randomGenerator->bounded(poolSize);
+        return makeMealPlanItem(*rankedCandidates.at(selectedIndex));
+    }
+
     std::optional<MealPlanItem> bestItem;
     double bestDifference = 0.0;
 
@@ -206,7 +243,8 @@ void appendSingleMealIfEnabled(
     QVector<MealPlanItem>& destination,
     const QVector<Recipe>& candidates,
     double mealRatio,
-    double dailyTargetCalories)
+    double dailyTargetCalories,
+    QRandomGenerator* randomGenerator)
 {
     if (mealRatio <= kComparisonEpsilon) {
         return;
@@ -215,7 +253,8 @@ void appendSingleMealIfEnabled(
     const std::optional<MealPlanItem> selected =
         selectClosestSingleRecipe(
             candidates,
-            dailyTargetCalories * mealRatio);
+            dailyTargetCalories * mealRatio,
+            randomGenerator);
     if (selected.has_value()) {
         destination.append(*selected);
     }
@@ -343,10 +382,40 @@ double macroDifference(
         : totalRelativeDifference / activeTargets;
 }
 
+struct ScoredMealPlan {
+    MealPlan plan;
+    double ratioDifference = 0.0;
+    double macroDifference = 0.0;
+    double dailyDifference = 0.0;
+};
+
+bool isBetterPlanScore(
+    const ScoredMealPlan& candidate,
+    const ScoredMealPlan& current)
+{
+    return candidate.ratioDifference
+            < current.ratioDifference - kComparisonEpsilon
+        || (std::abs(candidate.ratioDifference - current.ratioDifference)
+                <= kComparisonEpsilon
+            && (candidate.macroDifference
+                    < current.macroDifference - kComparisonEpsilon
+                || (std::abs(candidate.macroDifference
+                                - current.macroDifference)
+                        <= kComparisonEpsilon
+                    && (candidate.dailyDifference
+                            < current.dailyDifference - kComparisonEpsilon
+                        || (std::abs(candidate.dailyDifference
+                                        - current.dailyDifference)
+                                <= kComparisonEpsilon
+                            && mealPlanItemCount(candidate.plan)
+                                < mealPlanItemCount(current.plan))))));
+}
+
 std::optional<MealPlan> findBestMultiRecipePlan(
     const RecipesByMealType& groupedRecipes,
     double targetCalories,
-    const MealRecommendationOptions& options)
+    const MealRecommendationOptions& options,
+    QRandomGenerator* randomGenerator)
 {
     QVector<QVector<MealChoice>> choicesByEnabledMeal;
 
@@ -387,6 +456,7 @@ std::optional<MealPlan> findBestMultiRecipePlan(
     double bestRatioDifference = 0.0;
     double bestMacroDifference = 0.0;
     double bestDailyDifference = 0.0;
+    QVector<ScoredMealPlan> randomPlanPool;
     QVector<MealChoice> currentChoices;
 
     std::function<void(qsizetype, double)> search =
@@ -418,6 +488,23 @@ std::optional<MealPlan> findBestMultiRecipePlan(
                           candidate.totalNutrition,
                           *options.nutritionTarget)
                     : 0.0;
+
+                if (randomGenerator != nullptr) {
+                    randomPlanPool.append({
+                        std::move(candidate),
+                        ratioDifference,
+                        candidateMacroDifference,
+                        dailyDifference});
+                    std::stable_sort(
+                        randomPlanPool.begin(),
+                        randomPlanPool.end(),
+                        isBetterPlanScore);
+                    if (randomPlanPool.size() > kRandomPlanPoolSize) {
+                        randomPlanPool.resize(kRandomPlanPoolSize);
+                    }
+                    return;
+                }
+
                 const bool isBetter =
                     !bestPlan.has_value()
                     || ratioDifference
@@ -457,6 +544,12 @@ std::optional<MealPlan> findBestMultiRecipePlan(
         };
 
     search(0, 0.0);
+
+    if (randomGenerator != nullptr && !randomPlanPool.isEmpty()) {
+        const int selectedIndex = randomGenerator->bounded(
+            static_cast<int>(randomPlanPool.size()));
+        return std::move(randomPlanPool[selectedIndex].plan);
+    }
     return bestPlan;
 }
 
@@ -564,27 +657,39 @@ ServiceResult<MealPlan> MealRecommender::generate(
                 .arg(missingMealTypes.join(QStringLiteral("、"))));
     }
 
+    std::optional<QRandomGenerator> randomGenerator;
+    if (options.randomSeed.has_value()) {
+        randomGenerator.emplace(*options.randomSeed);
+    }
+    QRandomGenerator* generator = randomGenerator.has_value()
+        ? &*randomGenerator
+        : nullptr;
+
     MealPlan singleRecipePlan;
     appendSingleMealIfEnabled(
         singleRecipePlan.breakfast,
         groupedRecipes.breakfast,
         options.breakfastRatio,
-        targetCalories);
+        targetCalories,
+        generator);
     appendSingleMealIfEnabled(
         singleRecipePlan.lunch,
         groupedRecipes.lunch,
         options.lunchRatio,
-        targetCalories);
+        targetCalories,
+        generator);
     appendSingleMealIfEnabled(
         singleRecipePlan.dinner,
         groupedRecipes.dinner,
         options.dinnerRatio,
-        targetCalories);
+        targetCalories,
+        generator);
     appendSingleMealIfEnabled(
         singleRecipePlan.snacks,
         groupedRecipes.snacks,
         options.snackRatio,
-        targetCalories);
+        targetCalories,
+        generator);
 
     const auto addMealNutrition = [&singleRecipePlan](
                                       const QVector<MealPlanItem>& items) {
@@ -619,7 +724,8 @@ ServiceResult<MealPlan> MealRecommender::generate(
         findBestMultiRecipePlan(
             groupedRecipes,
             targetCalories,
-            options);
+            options,
+            generator);
 
     if (bestMultiRecipePlan.has_value()) {
         return ServiceResult<MealPlan>::success(
