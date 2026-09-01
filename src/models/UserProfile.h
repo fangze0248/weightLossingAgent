@@ -15,6 +15,7 @@ struct UserProfile {
     double targetWeightKg = 0.0;
     int activityLevel = 1;
     GoalType goalType = GoalType::Lose;
+    ExerciseGoal exerciseGoal = ExerciseGoal::LightHealth;
 
     // Magnitude of the weekly goal. For weight loss, allowed UI values are
     // normally 0.5, 1.0, and 1.5 kg.

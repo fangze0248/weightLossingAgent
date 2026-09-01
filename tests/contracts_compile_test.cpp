@@ -43,6 +43,13 @@ int main()
         return 3;
     }
 
+    user.exerciseGoal = ExerciseGoal::MuscleGain;
+    if (toStorageString(user.exerciseGoal) != QStringLiteral("muscle_gain")
+        || exerciseGoalFromStorageString(QStringLiteral("build_fitness"))
+            != ExerciseGoal::BuildFitness) {
+        return 4;
+    }
+
     (void)user;
     (void)exercise;
     (void)recipe;

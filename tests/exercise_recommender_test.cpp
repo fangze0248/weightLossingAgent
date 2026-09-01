@@ -411,5 +411,90 @@ int main()
         return 31;
     }
 
+    // 三种运动目标使用相同热量硬约束，但会在全部合法候选中选择不同的
+    // 强度或类别。这里限制为单项运动，便于精确验证目标排序。
+    Exercise lightHealthExercise;
+    lightHealthExercise.id = QStringLiteral("light-health");
+    lightHealthExercise.name = QStringLiteral("轻松步行");
+    lightHealthExercise.metValue = 3.0;
+    lightHealthExercise.category = ExerciseCategory::Aerobic;
+
+    Exercise buildFitnessExercise;
+    buildFitnessExercise.id = QStringLiteral("build-fitness");
+    buildFitnessExercise.name = QStringLiteral("中等强度训练");
+    buildFitnessExercise.metValue = 5.0;
+    buildFitnessExercise.category = ExerciseCategory::Aerobic;
+
+    Exercise muscleGainCardio;
+    muscleGainCardio.id = QStringLiteral("high-cardio");
+    muscleGainCardio.name = QStringLiteral("较高强度有氧");
+    muscleGainCardio.metValue = 6.5;
+    muscleGainCardio.category = ExerciseCategory::Aerobic;
+
+    Exercise muscleGainStrength = muscleGainCardio;
+    muscleGainStrength.id = QStringLiteral("strength-training");
+    muscleGainStrength.name = QStringLiteral("力量训练");
+    muscleGainStrength.metValue = 6.5;
+    muscleGainStrength.category = ExerciseCategory::Strength;
+
+    const QVector<Exercise> goalDatabase{
+        lightHealthExercise,
+        buildFitnessExercise,
+        muscleGainCardio,
+        muscleGainStrength};
+    ExerciseRecommendationOptions goalOptions = options;
+    goalOptions.maximumExerciseItems = 1;
+
+    UserProfile lightHealthUser = validUser;
+    lightHealthUser.exerciseGoal = ExerciseGoal::LightHealth;
+    const auto lightHealthResult = recommender.generate(
+        lightHealthUser,
+        196.0,
+        goalDatabase,
+        goalOptions);
+    if (!lightHealthResult.ok
+        || lightHealthResult.data.first().exerciseId
+            != QStringLiteral("light-health")) {
+        return 32;
+    }
+
+    UserProfile buildFitnessUser = validUser;
+    buildFitnessUser.exerciseGoal = ExerciseGoal::BuildFitness;
+    const auto buildFitnessResult = recommender.generate(
+        buildFitnessUser,
+        196.0,
+        goalDatabase,
+        goalOptions);
+    if (!buildFitnessResult.ok
+        || buildFitnessResult.data.first().exerciseId
+            != QStringLiteral("build-fitness")) {
+        return 33;
+    }
+
+    UserProfile muscleGainUser = validUser;
+    muscleGainUser.exerciseGoal = ExerciseGoal::MuscleGain;
+    const auto muscleGainResult = recommender.generate(
+        muscleGainUser,
+        196.0,
+        goalDatabase,
+        goalOptions);
+    if (!muscleGainResult.ok
+        || muscleGainResult.data.first().exerciseId
+            != QStringLiteral("strength-training")) {
+        return 34;
+    }
+
+    // 如果某次过滤后没有力量类别，增肌目标仍回退到较高强度候选。
+    const auto muscleGainFallbackResult = recommender.generate(
+        muscleGainUser,
+        196.0,
+        {lightHealthExercise, buildFitnessExercise, muscleGainCardio},
+        goalOptions);
+    if (!muscleGainFallbackResult.ok
+        || muscleGainFallbackResult.data.first().exerciseId
+            != QStringLiteral("high-cardio")) {
+        return 35;
+    }
+
     return 0;
 }
