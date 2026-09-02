@@ -797,5 +797,46 @@ int main()
         return 42;
     }
 
+    // 上周出现过的食谱应受到软性降权：新食谱即使相差少量热量，
+    // 只要仍在全天容差内，也应优先于完全命中但近期重复的食谱。
+    Recipe recentlyUsedBreakfast = randomBreakfastA;
+    recentlyUsedBreakfast.id = QStringLiteral("recently-used-breakfast");
+    recentlyUsedBreakfast.totalCalories = 300.0;
+    Recipe freshBreakfast = randomBreakfastB;
+    freshBreakfast.id = QStringLiteral("fresh-breakfast");
+    freshBreakfast.totalCalories = 310.0;
+
+    MealRecommendationOptions noveltyOptions = options;
+    noveltyOptions.maximumItemsPerMeal = 1;
+    noveltyOptions.recentRecipePenalties.insert(
+        recentlyUsedBreakfast.id,
+        1.0);
+    const auto noveltyResult = recommender.generate(
+        user,
+        1000.0,
+        {recentlyUsedBreakfast,
+         freshBreakfast,
+         randomLunchA,
+         randomDinnerA},
+        noveltyOptions);
+    if (!noveltyResult.ok
+        || noveltyResult.data.breakfast.first().recipeId
+            != QStringLiteral("fresh-breakfast")) {
+        return 43;
+    }
+
+    MealRecommendationOptions invalidNoveltyOptions = options;
+    invalidNoveltyOptions.recentRecipePenalties.insert(
+        QStringLiteral("bad-penalty"),
+        -0.1);
+    if (recommender.generate(
+            user,
+            1000.0,
+            randomDatabase,
+            invalidNoveltyOptions).code
+        != QStringLiteral("INVALID_OPTIONS")) {
+        return 44;
+    }
+
     return 0;
 }

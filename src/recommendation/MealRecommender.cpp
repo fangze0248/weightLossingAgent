@@ -21,6 +21,7 @@ constexpr int kMaximumChoicesPerMeal = 240;
 constexpr int kMaximumChoicesPerCalorieBucket = 24;
 constexpr int kMealPlanBeamWidth = 240;
 constexpr double kMealChoiceCalorieBucketSize = 50.0;
+constexpr double kRecentExposurePenaltyRatio = 0.08;
 
 bool isFinitePositive(double value)
 {
@@ -46,6 +47,18 @@ bool isValidPreference(const RecommendationPreference& preference)
          it != preference.keywordWeights.cend();
          ++it) {
         if (it.key().trimmed().isEmpty() || !std::isfinite(it.value())) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool isValidRecentRecipePenalties(
+    const QHash<QString, double>& penalties)
+{
+    for (auto it = penalties.cbegin(); it != penalties.cend(); ++it) {
+        if (it.key().trimmed().isEmpty()
+            || !isFiniteNonNegative(it.value())) {
             return false;
         }
     }
@@ -385,8 +398,10 @@ struct MealChoice {
     NutritionFacts nutrition;
     double targetRatio = 0.0;
     double ratioDifference = 0.0;
+    double diversityAdjustedRatioDifference = 0.0;
     double macroDifference = 0.0;
     double preferenceScore = 0.0;
+    double recentExposurePenalty = 0.0;
 };
 
 double macroDifference(
@@ -409,9 +424,11 @@ bool isBetterMealChoice(
     const MealChoice& candidate,
     const MealChoice& current)
 {
-    if (std::abs(candidate.ratioDifference - current.ratioDifference)
+    if (std::abs(candidate.diversityAdjustedRatioDifference
+                 - current.diversityAdjustedRatioDifference)
         > kComparisonEpsilon) {
-        return candidate.ratioDifference < current.ratioDifference;
+        return candidate.diversityAdjustedRatioDifference
+            < current.diversityAdjustedRatioDifference;
     }
     if (std::abs(candidate.macroDifference - current.macroDifference)
         > kComparisonEpsilon) {
@@ -436,7 +453,8 @@ QVector<MealChoice> buildMealChoices(
     double mealRatio,
     double maximumDailyCalories,
     const std::optional<NutritionFacts>& nutritionTarget,
-    const QHash<QString, double>& recipePreferenceScores)
+    const QHash<QString, double>& recipePreferenceScores,
+    const QHash<QString, double>& recentRecipePenalties)
 {
     // 先按热量区间保留每个餐次的代表性优质候选，避免某一个热量点
     // 占满候选池，同时把后续跨餐次搜索控制在固定规模内。
@@ -480,6 +498,19 @@ QVector<MealChoice> buildMealChoices(
             : recipePreferenceScores.value(second->id, 0.0);
         choice.preferenceScore =
             (firstPreference + secondPreference) / choice.itemCount;
+        const double firstExposure = recentRecipePenalties.value(
+            first.id,
+            0.0);
+        const double secondExposure = second == nullptr
+            ? 0.0
+            : recentRecipePenalties.value(second->id, 0.0);
+        choice.recentExposurePenalty =
+            (firstExposure + secondExposure) / choice.itemCount;
+        choice.diversityAdjustedRatioDifference =
+            choice.ratioDifference
+            + mealTargetCalories
+                * kRecentExposurePenaltyRatio
+                * choice.recentExposurePenalty;
 
         const int bucket = static_cast<int>(std::floor(
             choice.calories / kMealChoiceCalorieBucketSize));
@@ -586,6 +617,7 @@ double macroDifference(
 struct ScoredMealPlan {
     MealPlan plan;
     double ratioDifference = 0.0;
+    double diversityAdjustedRatioDifference = 0.0;
     double macroDifference = 0.0;
     double preferenceScore = 0.0;
     double dailyDifference = 0.0;
@@ -595,9 +627,11 @@ bool isBetterPlanScore(
     const ScoredMealPlan& candidate,
     const ScoredMealPlan& current)
 {
-    return candidate.ratioDifference
-            < current.ratioDifference - kComparisonEpsilon
-        || (std::abs(candidate.ratioDifference - current.ratioDifference)
+    return candidate.diversityAdjustedRatioDifference
+            < current.diversityAdjustedRatioDifference
+                - kComparisonEpsilon
+        || (std::abs(candidate.diversityAdjustedRatioDifference
+                        - current.diversityAdjustedRatioDifference)
                 <= kComparisonEpsilon
             && (candidate.macroDifference
                     < current.macroDifference - kComparisonEpsilon
@@ -652,7 +686,8 @@ std::optional<MealPlan> findBestMultiRecipePlan(
                 ratio,
                 maximumCalories,
                 options.nutritionTarget,
-                recipePreferenceScores));
+                recipePreferenceScores,
+                options.recentRecipePenalties));
         }
     };
 
@@ -709,6 +744,7 @@ std::optional<MealPlan> findBestMultiRecipePlan(
         NutritionFacts totalNutrition;
         double ratioDifference = 0.0;
         double preferenceTotal = 0.0;
+        double recentExposureTotal = 0.0;
         int itemCount = 0;
         double processedRatio = 0.0;
     };
@@ -738,6 +774,22 @@ std::optional<MealPlan> findBestMultiRecipePlan(
         const double currentMacro = partialMacroDifference(current);
         const double candidatePreference = preferenceScoreOf(candidate);
         const double currentPreference = preferenceScoreOf(current);
+        const double candidateExposure = candidate.itemCount == 0
+            ? 0.0
+            : candidate.recentExposureTotal / candidate.itemCount;
+        const double currentExposure = current.itemCount == 0
+            ? 0.0
+            : current.recentExposureTotal / current.itemCount;
+        const double candidateAdjustedRatio =
+            candidate.ratioDifference
+            + targetCalories
+                * kRecentExposurePenaltyRatio
+                * candidateExposure;
+        const double currentAdjustedRatio =
+            current.ratioDifference
+            + targetCalories
+                * kRecentExposurePenaltyRatio
+                * currentExposure;
         const double candidateProgressDifference = std::abs(
             candidate.totalCalories
             - targetCalories * candidate.processedRatio);
@@ -745,10 +797,9 @@ std::optional<MealPlan> findBestMultiRecipePlan(
             current.totalCalories
             - targetCalories * current.processedRatio);
 
-        if (std::abs(candidate.ratioDifference
-                     - current.ratioDifference)
+        if (std::abs(candidateAdjustedRatio - currentAdjustedRatio)
             > kComparisonEpsilon) {
-            return candidate.ratioDifference < current.ratioDifference;
+            return candidateAdjustedRatio < currentAdjustedRatio;
         }
         if (std::abs(candidateMacro - currentMacro)
             > kComparisonEpsilon) {
@@ -799,6 +850,8 @@ std::optional<MealPlan> findBestMultiRecipePlan(
                 candidate.ratioDifference += choice.ratioDifference;
                 candidate.preferenceTotal +=
                     choice.preferenceScore * choice.itemCount;
+                candidate.recentExposureTotal +=
+                    choice.recentExposurePenalty * choice.itemCount;
                 candidate.itemCount += choice.itemCount;
                 candidate.processedRatio += choice.targetRatio;
                 expanded.append(std::move(candidate));
@@ -834,6 +887,13 @@ std::optional<MealPlan> findBestMultiRecipePlan(
         rankedPlans.append({
             std::move(plan),
             partial.ratioDifference,
+            partial.ratioDifference
+                + targetCalories
+                    * kRecentExposurePenaltyRatio
+                    * (partial.itemCount == 0
+                           ? 0.0
+                           : partial.recentExposureTotal
+                               / partial.itemCount),
             options.nutritionTarget.has_value()
                 ? macroDifference(
                       partial.totalNutrition,
@@ -930,7 +990,9 @@ ServiceResult<MealPlan> MealRecommender::generate(
         || invalidSnackOptions
         || invalidItemCount
         || invalidNutritionTarget
-        || !isValidPreference(options.preference)) {
+        || !isValidPreference(options.preference)
+        || !isValidRecentRecipePenalties(
+            options.recentRecipePenalties)) {
         return ServiceResult<MealPlan>::failure(
             QStringLiteral("INVALID_OPTIONS"),
             QStringLiteral(
@@ -938,7 +1000,8 @@ ServiceResult<MealPlan> MealRecommender::generate(
                 "非负有限数且合计为 1，加餐开关必须与加餐比例一致，"
                 "每餐最大项目数必须为 1～2；营养目标中的蛋白质、碳水和"
                 "脂肪必须为非负有限数，且至少一项大于 0；反馈偏好中的"
-                "项目权重必须为非负有限数，关键词权重必须为有限数。"));
+                "项目权重必须为非负有限数，关键词权重必须为有限数；近期"
+                "食谱惩罚必须为非负有限数。"));
     }
 
     const QVector<Recipe> eligibleRecipes = filterEligibleRecipes(
@@ -1029,7 +1092,8 @@ ServiceResult<MealPlan> MealRecommender::generate(
 
     if (dailyCaloriesWithinTolerance
         && !options.nutritionTarget.has_value()
-        && !options.preference.hasSignals()) {
+        && !options.preference.hasSignals()
+        && options.recentRecipePenalties.isEmpty()) {
         return ServiceResult<MealPlan>::success(
             std::move(singleRecipePlan),
             QStringLiteral("已生成每餐一份食谱的每日膳食计划。"));

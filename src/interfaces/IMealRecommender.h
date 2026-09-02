@@ -6,6 +6,7 @@
 #include "../models/Recipe.h"
 #include "../models/UserProfile.h"
 
+#include <QHash>
 #include <QStringList>
 #include <QVector>
 #include <QtGlobal>
@@ -13,6 +14,9 @@
 
 struct MealRecommendationOptions {
     QStringList excludedRecipeIds;
+    // 近期周计划中的食谱 ID -> 暴露惩罚。数值越大，越优先探索
+    // 质量相近的新食谱；这是软约束，不会直接删除候选。
+    QHash<QString, double> recentRecipePenalties;
     double toleranceRatio = 0.10;
     double breakfastRatio = 0.30;
     double lunchRatio = 0.40;

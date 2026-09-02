@@ -8,8 +8,10 @@
 #include "interfaces/IUserRepository.h"
 #include "interfaces/IWeeklyPlanner.h"
 
+#include <QRandomGenerator>
 #include <QSet>
 
+#include <algorithm>
 #include <cmath>
 #include <utility>
 
@@ -18,9 +20,14 @@ namespace {
 // A seven-day plan can consume up to two recipes per meal and three exercise
 // items per day. Keep enough SQL-ranked candidates for whole-week diversity
 // without loading the complete tables into memory.
-constexpr int kRecipeCandidatesPerMeal = 32;
+constexpr int kRecipeQueryLimitPerMeal = 256;
+constexpr int kRecipeQualityCandidatesPerMeal = 32;
+constexpr int kRecipeExplorationCandidatesPerMeal = 32;
 constexpr int kExerciseCandidateLimit = 32;
 constexpr double kReferenceExerciseMinutes = 30.0;
+constexpr int kRecentPlanCount = 3;
+constexpr double kRecentPlanPenalties[kRecentPlanCount] = {
+    1.0, 0.6, 0.3};
 
 void appendUniqueRecipes(QVector<Recipe>* destination,
                          QSet<QString>* acceptedIds,
@@ -39,7 +46,8 @@ ServiceResult<QVector<Recipe>> findRecipeCandidates(
     IRecipeRepository& repository,
     const UserProfile& user,
     double dailyTargetCalories,
-    const MealRecommendationOptions& options)
+    const MealRecommendationOptions& options,
+    const std::optional<quint32>& weeklyRandomSeed)
 {
     QVector<Recipe> candidates;
     QSet<QString> acceptedIds;
@@ -51,13 +59,53 @@ ServiceResult<QVector<Recipe>> findRecipeCandidates(
         filter.mealType = mealType;
         filter.excludedIds = user.dislikedRecipeIds;
         filter.targetCalories = dailyTargetCalories * ratio;
-        filter.limit = kRecipeCandidatesPerMeal;
+        filter.limit = kRecipeQueryLimitPerMeal;
         const auto result = repository.findAll(filter);
         if (!result.ok) {
             return ServiceResult<bool>::failure(
                 result.code, result.message, result.warnings);
         }
-        appendUniqueRecipes(&candidates, &acceptedIds, result.data);
+        const int qualityCount = std::min(
+            kRecipeQualityCandidatesPerMeal,
+            static_cast<int>(result.data.size()));
+        appendUniqueRecipes(
+            &candidates,
+            &acceptedIds,
+            result.data.mid(0, qualityCount));
+
+        QVector<int> explorationIndexes;
+        explorationIndexes.reserve(result.data.size() - qualityCount);
+        for (int index = qualityCount;
+             index < result.data.size();
+             ++index) {
+            explorationIndexes.append(index);
+        }
+        if (weeklyRandomSeed.has_value()) {
+            QRandomGenerator generator(
+                *weeklyRandomSeed
+                ^ (0x9e3779b9U
+                   * (static_cast<quint32>(mealType) + 1U)));
+            for (int index = explorationIndexes.size() - 1;
+                 index > 0;
+                 --index) {
+                const int swapIndex = generator.bounded(index + 1);
+                explorationIndexes.swapItemsAt(index, swapIndex);
+            }
+        }
+
+        const int explorationCount = std::min(
+            kRecipeExplorationCandidatesPerMeal,
+            static_cast<int>(explorationIndexes.size()));
+        QVector<Recipe> explorationRecipes;
+        explorationRecipes.reserve(explorationCount);
+        for (int index = 0; index < explorationCount; ++index) {
+            explorationRecipes.append(
+                result.data.at(explorationIndexes.at(index)));
+        }
+        appendUniqueRecipes(
+            &candidates,
+            &acceptedIds,
+            explorationRecipes);
         return ServiceResult<bool>::success(true);
     };
 
@@ -105,6 +153,49 @@ ServiceResult<QVector<Exercise>> findExerciseCandidates(
             / (3.5 * user.weightKg * kReferenceExerciseMinutes);
     }
     return repository.findAll(filter);
+}
+
+void appendRecipeIds(QSet<QString>* ids, const WeeklyPlan& plan)
+{
+    if (!ids) return;
+    const auto appendItems = [ids](const QVector<MealPlanItem>& items) {
+        for (const MealPlanItem& item : items) {
+            const QString id = item.recipeId.trimmed();
+            if (!id.isEmpty()) ids->insert(id);
+        }
+    };
+    for (const DailyPlan& day : plan.days) {
+        appendItems(day.meals.breakfast);
+        appendItems(day.meals.lunch);
+        appendItems(day.meals.dinner);
+        appendItems(day.meals.snacks);
+    }
+}
+
+QHash<QString, double> buildRecentRecipePenalties(
+    const QVector<WeeklyPlan>& plans,
+    const QDate& requestedStartDate)
+{
+    QHash<QString, double> penalties;
+    int acceptedPlanCount = 0;
+    for (const WeeklyPlan& plan : plans) {
+        if (!plan.startDate.isValid()
+            || plan.startDate > requestedStartDate) {
+            continue;
+        }
+
+        QSet<QString> recipeIds;
+        appendRecipeIds(&recipeIds, plan);
+        const double penalty =
+            kRecentPlanPenalties[acceptedPlanCount];
+        for (const QString& id : recipeIds) {
+            penalties[id] += penalty;
+        }
+
+        ++acceptedPlanCount;
+        if (acceptedPlanCount >= kRecentPlanCount) break;
+    }
+    return penalties;
 }
 
 } // namespace
@@ -173,7 +264,8 @@ ServiceResult<WeeklyPlan> PlanGenerationService::generateAndSave(
         recipeRepository_,
         *userResult.data,
         calorieResult.data.recommendedIntake,
-        options.mealOptions);
+        options.mealOptions,
+        options.randomSeed);
     if (!recipeResult.ok) {
         return ServiceResult<WeeklyPlan>::failure(
             recipeResult.code,
@@ -195,6 +287,25 @@ ServiceResult<WeeklyPlan> PlanGenerationService::generateAndSave(
         effectiveOptions.exerciseOptions.preference = exercisePreference.data;
     }
 
+    QStringList preparationWarnings;
+    const auto historyResult = planRepository_.findByUserId(
+        normalizedUserId);
+    if (historyResult.ok) {
+        const QHash<QString, double> recentPenalties =
+            buildRecentRecipePenalties(
+                historyResult.data,
+                startDate);
+        for (auto it = recentPenalties.cbegin();
+             it != recentPenalties.cend();
+             ++it) {
+            effectiveOptions.mealOptions.recentRecipePenalties[it.key()]
+                += it.value();
+        }
+    } else {
+        preparationWarnings.append(QStringLiteral(
+            "读取历史周计划失败，本次未应用跨周食谱降重。"));
+    }
+
     auto planResult = weeklyPlanner_.generate(
         *userResult.data,
         calorieResult.data,
@@ -203,6 +314,7 @@ ServiceResult<WeeklyPlan> PlanGenerationService::generateAndSave(
         recipeResult.data,
         effectiveOptions);
     planResult.warnings.append(calorieResult.warnings);
+    planResult.warnings.append(preparationWarnings);
     if (!planResult.ok) {
         return planResult;
     }

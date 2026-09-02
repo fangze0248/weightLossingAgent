@@ -2,6 +2,7 @@
 #include "recommendation/ExerciseRecommender.h"
 #include "recommendation/MealRecommender.h"
 
+#include <QRandomGenerator>
 #include <QUuid>
 
 #include <cmath>
@@ -21,7 +22,7 @@ constexpr double kCaloriesPerGramProtein = 4.0;
 constexpr double kCaloriesPerGramCarbohydrate = 4.0;
 constexpr double kCaloriesPerGramFat = 9.0;
 
-// 七个系数互不相同、总和为 0，因此既能制造自然波动，又不会改变周平均目标。
+// 未提供随机种子时使用固定的零均值模式，保证旧调用方仍可复现。
 constexpr double kDailyVariationPattern[kRequiredNumberOfDays] = {
     -1.0, -0.65, -0.30, 0.0, 0.25, 0.70, 1.0};
 
@@ -53,13 +54,33 @@ CalorieNeed calorieNeedForDay(
     int dayIndex,
     const WeeklyPlanOptions& options)
 {
-    const int rotation = options.randomSeed.has_value()
-        ? static_cast<int>(*options.randomSeed % kRequiredNumberOfDays)
-        : 0;
-    const int patternIndex = (dayIndex + rotation) % kRequiredNumberOfDays;
+    double variationCoefficient = kDailyVariationPattern[dayIndex];
+    if (options.randomSeed.has_value()) {
+        // 每个周种子生成一组真正不同的七日波动，而不是只旋转同一组值。
+        // 去均值后再归一化，保证周平均目标不变且不超过配置上限。
+        QRandomGenerator generator(*options.randomSeed ^ 0x85ebca6bU);
+        double coefficients[kRequiredNumberOfDays] = {};
+        double total = 0.0;
+        for (double& coefficient : coefficients) {
+            coefficient = generator.generateDouble() * 2.0 - 1.0;
+            total += coefficient;
+        }
+        const double mean = total / kRequiredNumberOfDays;
+        double maximumAbsoluteValue = 0.0;
+        for (double& coefficient : coefficients) {
+            coefficient -= mean;
+            maximumAbsoluteValue = std::max(
+                maximumAbsoluteValue,
+                std::abs(coefficient));
+        }
+        if (maximumAbsoluteValue > kComparisonEpsilon) {
+            variationCoefficient =
+                coefficients[dayIndex] / maximumAbsoluteValue;
+        }
+    }
     const double multiplier = 1.0
         + options.dailyTargetVariationRatio
-            * kDailyVariationPattern[patternIndex];
+            * variationCoefficient;
 
     CalorieNeed result = base;
     result.recommendedIntake *= multiplier;

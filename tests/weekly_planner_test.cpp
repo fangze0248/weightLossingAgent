@@ -2,6 +2,7 @@
 
 #include <QSet>
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
@@ -480,6 +481,40 @@ int main()
                     - calorieNeed.exerciseTarget * 7.0) > 1e-9) {
         return 30;
     }
+
+    // 不同周种子应生成不同的七日热量值集合，而不只是把同一组值换序。
+    WeeklyPlanOptions differentVariationOptions = variationOptions;
+    differentVariationOptions.randomSeed = 43;
+    const auto differentVariationResult = planner.generate(
+        user,
+        calorieNeed,
+        validStartDate,
+        {exercise},
+        recipes,
+        differentVariationOptions);
+    if (!differentVariationResult.ok) return 42;
+
+    QVector<double> firstWeekTargets;
+    QVector<double> secondWeekTargets;
+    for (int dayIndex = 0; dayIndex < 7; ++dayIndex) {
+        firstWeekTargets.append(
+            variationResult.data.days.at(dayIndex)
+                .calorieNeed.recommendedIntake);
+        secondWeekTargets.append(
+            differentVariationResult.data.days.at(dayIndex)
+                .calorieNeed.recommendedIntake);
+    }
+    std::sort(firstWeekTargets.begin(), firstWeekTargets.end());
+    std::sort(secondWeekTargets.begin(), secondWeekTargets.end());
+    bool hasDifferentTarget = false;
+    for (int dayIndex = 0; dayIndex < 7; ++dayIndex) {
+        if (std::abs(firstWeekTargets.at(dayIndex)
+                     - secondWeekTargets.at(dayIndex)) > 1e-9) {
+            hasDifferentTarget = true;
+            break;
+        }
+    }
+    if (!hasDifferentTarget) return 43;
 
     WeeklyPlanOptions invalidVariation = fixedTargetOptions;
     invalidVariation.dailyTargetVariationRatio = 0.11;
