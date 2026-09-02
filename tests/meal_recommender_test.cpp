@@ -710,5 +710,92 @@ int main()
         return 41;
     }
 
+    // 按当前内置数据库的四餐规模验证：开启加餐且启用营养目标时，
+    // 必须通过有界搜索及时返回。旧算法的组合空间约为 2.5e19。
+    QVector<Recipe> largeSnackDatabase;
+    const auto appendStressRecipes = [
+                                         &largeSnackDatabase](
+                                         const QString& prefix,
+                                         MealType mealType,
+                                         int recipeCount,
+                                         double calories,
+                                         double protein,
+                                         double carbohydrate,
+                                         double fat) {
+        for (int index = 0; index < recipeCount; ++index) {
+            Recipe recipe;
+            recipe.id = QStringLiteral("stress-%1-%2")
+                            .arg(prefix)
+                            .arg(index);
+            recipe.name = recipe.id;
+            recipe.mealType = mealType;
+            recipe.totalCalories = calories;
+            recipe.nutritionPerServing.proteinG = protein;
+            recipe.nutritionPerServing.carbohydrateG = carbohydrate;
+            recipe.nutritionPerServing.fatG = fat;
+            largeSnackDatabase.append(std::move(recipe));
+        }
+    };
+    appendStressRecipes(
+        QStringLiteral("breakfast"),
+        MealType::Breakfast,
+        340,
+        250.0,
+        25.0,
+        25.0,
+        5.0);
+    appendStressRecipes(
+        QStringLiteral("lunch"),
+        MealType::Lunch,
+        412,
+        350.0,
+        35.0,
+        35.0,
+        10.0);
+    appendStressRecipes(
+        QStringLiteral("dinner"),
+        MealType::Dinner,
+        465,
+        300.0,
+        30.0,
+        30.0,
+        10.0);
+    appendStressRecipes(
+        QStringLiteral("snack"),
+        MealType::Snack,
+        303,
+        100.0,
+        10.0,
+        10.0,
+        5.0);
+
+    MealRecommendationOptions largeSnackOptions;
+    largeSnackOptions.breakfastRatio = 0.25;
+    largeSnackOptions.lunchRatio = 0.35;
+    largeSnackOptions.dinnerRatio = 0.30;
+    largeSnackOptions.snackRatio = 0.10;
+    largeSnackOptions.includeSnack = true;
+    largeSnackOptions.maximumItemsPerMeal = 2;
+    NutritionFacts largeSnackTarget;
+    largeSnackTarget.proteinG = 100.0;
+    largeSnackTarget.carbohydrateG = 100.0;
+    largeSnackTarget.fatG = 30.0;
+    largeSnackOptions.nutritionTarget = largeSnackTarget;
+
+    const auto largeSnackResult = recommender.generate(
+        user,
+        1000.0,
+        largeSnackDatabase,
+        largeSnackOptions);
+    if (!largeSnackResult.ok
+        || largeSnackResult.data.breakfast.size() != 1
+        || largeSnackResult.data.lunch.size() != 1
+        || largeSnackResult.data.dinner.size() != 1
+        || largeSnackResult.data.snacks.size() != 1
+        || std::abs(largeSnackResult.data.totalCalories - 1000.0)
+            > 1e-9) {
+        return 42;
+    }
+
     return 0;
 }
