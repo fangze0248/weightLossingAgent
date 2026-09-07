@@ -70,6 +70,8 @@ add_library(recommendation_core STATIC
     src/recommendation/recommendationcore.cpp
     src/recommendation/healthcalculator.h
     src/recommendation/healthcalculator.cpp
+    src/recommendation/nutritiontargetcalculator.h
+    src/recommendation/nutritiontargetcalculator.cpp
     src/recommendation/ExerciseRecommender.h
     src/recommendation/ExerciseRecommender.cpp
     src/recommendation/MealRecommender.h

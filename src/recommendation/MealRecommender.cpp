@@ -22,6 +22,11 @@ constexpr int kMaximumChoicesPerCalorieBucket = 24;
 constexpr int kMealPlanBeamWidth = 240;
 constexpr double kMealChoiceCalorieBucketSize = 50.0;
 constexpr double kRecentExposurePenaltyRatio = 0.08;
+// 质量差距很小时视为同一层，再让反馈真正参与选择；超过该范围时
+// 仍严格保持“热量第一、三大营养素第二”。
+constexpr double kEquivalentMealCalorieDifference = 10.0;
+constexpr double kEquivalentPlanRatioDifference = 20.0;
+constexpr double kEquivalentMacroDifference = 0.03;
 
 bool isFinitePositive(double value)
 {
@@ -31,6 +36,12 @@ bool isFinitePositive(double value)
 bool isFiniteNonNegative(double value)
 {
     return std::isfinite(value) && value >= 0.0;
+}
+
+qint64 scoreTier(double value, double tierWidth)
+{
+    return static_cast<qint64>(std::floor(
+        (value + kComparisonEpsilon) / tierWidth));
 }
 
 bool isValidPreference(const RecommendationPreference& preference)
@@ -424,6 +435,28 @@ bool isBetterMealChoice(
     const MealChoice& candidate,
     const MealChoice& current)
 {
+    const qint64 candidateCalorieTier = scoreTier(
+        candidate.diversityAdjustedRatioDifference,
+        kEquivalentMealCalorieDifference);
+    const qint64 currentCalorieTier = scoreTier(
+        current.diversityAdjustedRatioDifference,
+        kEquivalentMealCalorieDifference);
+    if (candidateCalorieTier != currentCalorieTier) {
+        return candidateCalorieTier < currentCalorieTier;
+    }
+    const qint64 candidateMacroTier = scoreTier(
+        candidate.macroDifference,
+        kEquivalentMacroDifference);
+    const qint64 currentMacroTier = scoreTier(
+        current.macroDifference,
+        kEquivalentMacroDifference);
+    if (candidateMacroTier != currentMacroTier) {
+        return candidateMacroTier < currentMacroTier;
+    }
+    if (std::abs(candidate.preferenceScore - current.preferenceScore)
+        > kComparisonEpsilon) {
+        return candidate.preferenceScore > current.preferenceScore;
+    }
     if (std::abs(candidate.diversityAdjustedRatioDifference
                  - current.diversityAdjustedRatioDifference)
         > kComparisonEpsilon) {
@@ -433,10 +466,6 @@ bool isBetterMealChoice(
     if (std::abs(candidate.macroDifference - current.macroDifference)
         > kComparisonEpsilon) {
         return candidate.macroDifference < current.macroDifference;
-    }
-    if (std::abs(candidate.preferenceScore - current.preferenceScore)
-        > kComparisonEpsilon) {
-        return candidate.preferenceScore > current.preferenceScore;
     }
     if (candidate.itemCount != current.itemCount) {
         return candidate.itemCount < current.itemCount;
@@ -627,31 +656,44 @@ bool isBetterPlanScore(
     const ScoredMealPlan& candidate,
     const ScoredMealPlan& current)
 {
-    return candidate.diversityAdjustedRatioDifference
-            < current.diversityAdjustedRatioDifference
-                - kComparisonEpsilon
-        || (std::abs(candidate.diversityAdjustedRatioDifference
-                        - current.diversityAdjustedRatioDifference)
-                <= kComparisonEpsilon
-            && (candidate.macroDifference
-                    < current.macroDifference - kComparisonEpsilon
-                || (std::abs(candidate.macroDifference
-                                - current.macroDifference)
-                        <= kComparisonEpsilon
-                    && (candidate.preferenceScore
-                            > current.preferenceScore + kComparisonEpsilon
-                        || (std::abs(candidate.preferenceScore
-                                        - current.preferenceScore)
-                                <= kComparisonEpsilon
-                            && (candidate.dailyDifference
-                                    < current.dailyDifference
-                                        - kComparisonEpsilon
-                                || (std::abs(candidate.dailyDifference
-                                                - current.dailyDifference)
-                                        <= kComparisonEpsilon
-                                    && mealPlanItemCount(candidate.plan)
-                                        < mealPlanItemCount(
-                                            current.plan))))))));
+    const qint64 candidateRatioTier = scoreTier(
+        candidate.diversityAdjustedRatioDifference,
+        kEquivalentPlanRatioDifference);
+    const qint64 currentRatioTier = scoreTier(
+        current.diversityAdjustedRatioDifference,
+        kEquivalentPlanRatioDifference);
+    if (candidateRatioTier != currentRatioTier) {
+        return candidateRatioTier < currentRatioTier;
+    }
+    const qint64 candidateMacroTier = scoreTier(
+        candidate.macroDifference,
+        kEquivalentMacroDifference);
+    const qint64 currentMacroTier = scoreTier(
+        current.macroDifference,
+        kEquivalentMacroDifference);
+    if (candidateMacroTier != currentMacroTier) {
+        return candidateMacroTier < currentMacroTier;
+    }
+    if (std::abs(candidate.preferenceScore - current.preferenceScore)
+        > kComparisonEpsilon) {
+        return candidate.preferenceScore > current.preferenceScore;
+    }
+    if (std::abs(candidate.diversityAdjustedRatioDifference
+                 - current.diversityAdjustedRatioDifference)
+        > kComparisonEpsilon) {
+        return candidate.diversityAdjustedRatioDifference
+            < current.diversityAdjustedRatioDifference;
+    }
+    if (std::abs(candidate.macroDifference - current.macroDifference)
+        > kComparisonEpsilon) {
+        return candidate.macroDifference < current.macroDifference;
+    }
+    if (std::abs(candidate.dailyDifference - current.dailyDifference)
+        > kComparisonEpsilon) {
+        return candidate.dailyDifference < current.dailyDifference;
+    }
+    return mealPlanItemCount(candidate.plan)
+        < mealPlanItemCount(current.plan);
 }
 
 std::optional<MealPlan> findBestMultiRecipePlan(
@@ -797,6 +839,28 @@ std::optional<MealPlan> findBestMultiRecipePlan(
             current.totalCalories
             - targetCalories * current.processedRatio);
 
+        const qint64 candidateRatioTier = scoreTier(
+            candidateAdjustedRatio,
+            kEquivalentPlanRatioDifference);
+        const qint64 currentRatioTier = scoreTier(
+            currentAdjustedRatio,
+            kEquivalentPlanRatioDifference);
+        if (candidateRatioTier != currentRatioTier) {
+            return candidateRatioTier < currentRatioTier;
+        }
+        const qint64 candidateMacroTier = scoreTier(
+            candidateMacro,
+            kEquivalentMacroDifference);
+        const qint64 currentMacroTier = scoreTier(
+            currentMacro,
+            kEquivalentMacroDifference);
+        if (candidateMacroTier != currentMacroTier) {
+            return candidateMacroTier < currentMacroTier;
+        }
+        if (std::abs(candidatePreference - currentPreference)
+            > kComparisonEpsilon) {
+            return candidatePreference > currentPreference;
+        }
         if (std::abs(candidateAdjustedRatio - currentAdjustedRatio)
             > kComparisonEpsilon) {
             return candidateAdjustedRatio < currentAdjustedRatio;
@@ -804,10 +868,6 @@ std::optional<MealPlan> findBestMultiRecipePlan(
         if (std::abs(candidateMacro - currentMacro)
             > kComparisonEpsilon) {
             return candidateMacro < currentMacro;
-        }
-        if (std::abs(candidatePreference - currentPreference)
-            > kComparisonEpsilon) {
-            return candidatePreference > currentPreference;
         }
         if (std::abs(candidateProgressDifference
                      - currentProgressDifference)

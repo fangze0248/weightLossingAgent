@@ -1,6 +1,7 @@
 #include "recommendation/WeeklyPlanner.h"
 #include "recommendation/ExerciseRecommender.h"
 #include "recommendation/MealRecommender.h"
+#include "recommendation/nutritiontargetcalculator.h"
 
 #include <QRandomGenerator>
 #include <QUuid>
@@ -15,12 +16,6 @@ constexpr double kMaximumDailyTargetVariationRatio = 0.10;
 constexpr double kComparisonEpsilon = 1e-9;
 constexpr double kUnderweightBmiThreshold = 18.5;
 constexpr double kOverweightBmiThreshold = 24.0;
-constexpr double kProteinEnergyRatio = 0.20;
-constexpr double kCarbohydrateEnergyRatio = 0.50;
-constexpr double kFatEnergyRatio = 0.30;
-constexpr double kCaloriesPerGramProtein = 4.0;
-constexpr double kCaloriesPerGramCarbohydrate = 4.0;
-constexpr double kCaloriesPerGramFat = 9.0;
 
 // 未提供随机种子时使用固定的零均值模式，保证旧调用方仍可复现。
 constexpr double kDailyVariationPattern[kRequiredNumberOfDays] = {
@@ -35,18 +30,6 @@ double bmiOf(const UserProfile& user)
 {
     const double heightMeters = user.heightCm / 100.0;
     return user.weightKg / (heightMeters * heightMeters);
-}
-
-NutritionFacts automaticNutritionTarget(double targetCalories)
-{
-    NutritionFacts target;
-    target.caloriesKcal = targetCalories;
-    target.proteinG =
-        targetCalories * kProteinEnergyRatio / kCaloriesPerGramProtein;
-    target.carbohydrateG = targetCalories
-        * kCarbohydrateEnergyRatio / kCaloriesPerGramCarbohydrate;
-    target.fatG = targetCalories * kFatEnergyRatio / kCaloriesPerGramFat;
-    return target;
 }
 
 CalorieNeed calorieNeedForDay(
@@ -98,6 +81,9 @@ WeeklyPlanOptions optionsForDay(
         result.mealOptions.randomSeed =
             *base.randomSeed
             + 0x9e3779b9U * static_cast<quint32>(dayIndex + 1);
+        result.exerciseOptions.randomSeed =
+            *base.randomSeed
+            + 0x85ebca6bU * static_cast<quint32>(dayIndex + 1);
     }
     return result;
 }
@@ -130,7 +116,7 @@ ServiceResult<DailyPlan> generateDailyPlan(
     if (options.autoCalculateNutritionTarget
         && !mealOptions.nutritionTarget.has_value()) {
         // 使用当天的摄入目标计算，保证七天热量波动时营养目标同步变化。
-        mealOptions.nutritionTarget = automaticNutritionTarget(
+        mealOptions.nutritionTarget = nutrition_target::calculateDefault(
             calorieNeed.recommendedIntake);
     }
     const auto mealResult = mealRecommender.generate(

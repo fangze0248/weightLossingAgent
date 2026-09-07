@@ -7,6 +7,7 @@
 #include "interfaces/IRecipeRepository.h"
 #include "interfaces/IUserRepository.h"
 #include "interfaces/IWeeklyPlanner.h"
+#include "recommendation/nutritiontargetcalculator.h"
 
 #include <QRandomGenerator>
 #include <QSet>
@@ -26,12 +27,6 @@ constexpr int kRecipeExplorationCandidatesPerMeal = 32;
 constexpr int kExerciseCandidateLimit = 32;
 constexpr double kReferenceExerciseMinutes = 30.0;
 constexpr int kRecentPlanCount = 3;
-constexpr double kProteinEnergyRatio = 0.20;
-constexpr double kCarbohydrateEnergyRatio = 0.50;
-constexpr double kFatEnergyRatio = 0.30;
-constexpr double kCaloriesPerGramProtein = 4.0;
-constexpr double kCaloriesPerGramCarbohydrate = 4.0;
-constexpr double kCaloriesPerGramFat = 9.0;
 constexpr double kRecentPlanPenalties[kRecentPlanCount] = {
     1.0, 0.6, 0.3};
 
@@ -56,15 +51,7 @@ std::optional<NutritionFacts> nutritionTargetForCandidateQuery(
         return std::nullopt;
     }
 
-    NutritionFacts target;
-    target.caloriesKcal = dailyTargetCalories;
-    target.proteinG = dailyTargetCalories
-        * kProteinEnergyRatio / kCaloriesPerGramProtein;
-    target.carbohydrateG = dailyTargetCalories
-        * kCarbohydrateEnergyRatio / kCaloriesPerGramCarbohydrate;
-    target.fatG = dailyTargetCalories
-        * kFatEnergyRatio / kCaloriesPerGramFat;
-    return target;
+    return nutrition_target::calculateDefault(dailyTargetCalories);
 }
 
 void appendUniqueRecipes(QVector<Recipe>* destination,
@@ -218,30 +205,57 @@ void appendRecipeIds(QSet<QString>* ids, const WeeklyPlan& plan)
     }
 }
 
-QHash<QString, double> buildRecentRecipePenalties(
+void appendExerciseIds(QSet<QString>* ids, const WeeklyPlan& plan)
+{
+    if (!ids) return;
+    for (const DailyPlan& day : plan.days) {
+        for (const ExercisePlanItem& item : day.exercises) {
+            const QString id = item.exerciseId.trimmed();
+            if (!id.isEmpty()) ids->insert(id);
+        }
+    }
+}
+
+struct RecentPlanPenalties {
+    QHash<QString, double> recipes;
+    QHash<QString, double> exercises;
+};
+
+RecentPlanPenalties buildRecentPlanPenalties(
     const QVector<WeeklyPlan>& plans,
     const QDate& requestedStartDate)
 {
-    QHash<QString, double> penalties;
-    int acceptedPlanCount = 0;
+    RecentPlanPenalties result;
+    QSet<QString> acceptedWeekStarts;
+    int acceptedWeekCount = 0;
     for (const WeeklyPlan& plan : plans) {
         if (!plan.startDate.isValid()
             || plan.startDate > requestedStartDate) {
             continue;
         }
+        const QString weekKey = plan.startDate.toString(Qt::ISODate);
+        if (acceptedWeekStarts.contains(weekKey)) {
+            continue;
+        }
+        acceptedWeekStarts.insert(weekKey);
 
         QSet<QString> recipeIds;
+        QSet<QString> exerciseIds;
         appendRecipeIds(&recipeIds, plan);
+        appendExerciseIds(&exerciseIds, plan);
         const double penalty =
-            kRecentPlanPenalties[acceptedPlanCount];
+            kRecentPlanPenalties[acceptedWeekCount];
         for (const QString& id : recipeIds) {
-            penalties[id] += penalty;
+            result.recipes[id] += penalty;
+        }
+        for (const QString& id : exerciseIds) {
+            result.exercises[id] += penalty;
         }
 
-        ++acceptedPlanCount;
-        if (acceptedPlanCount >= kRecentPlanCount) break;
+        ++acceptedWeekCount;
+        if (acceptedWeekCount >= kRecentPlanCount) break;
     }
-    return penalties;
+    return result;
 }
 
 } // namespace
@@ -342,19 +356,25 @@ ServiceResult<WeeklyPlan> PlanGenerationService::generateAndSave(
     const auto historyResult = planRepository_.findByUserId(
         normalizedUserId);
     if (historyResult.ok) {
-        const QHash<QString, double> recentPenalties =
-            buildRecentRecipePenalties(
+        const RecentPlanPenalties recentPenalties =
+            buildRecentPlanPenalties(
                 historyResult.data,
                 startDate);
-        for (auto it = recentPenalties.cbegin();
-             it != recentPenalties.cend();
+        for (auto it = recentPenalties.recipes.cbegin();
+             it != recentPenalties.recipes.cend();
              ++it) {
             effectiveOptions.mealOptions.recentRecipePenalties[it.key()]
                 += it.value();
         }
+        for (auto it = recentPenalties.exercises.cbegin();
+             it != recentPenalties.exercises.cend();
+             ++it) {
+            effectiveOptions.exerciseOptions
+                .recentExercisePenalties[it.key()] += it.value();
+        }
     } else {
         preparationWarnings.append(QStringLiteral(
-            "读取历史周计划失败，本次未应用跨周食谱降重。"));
+            "读取历史周计划失败，本次未应用跨周食谱和运动降重。"));
     }
 
     auto planResult = weeklyPlanner_.generate(

@@ -6,6 +6,7 @@
 #include "../models/RecommendationPreference.h"
 #include "../models/UserProfile.h"
 
+#include <QHash>
 #include <QStringList>
 #include <QVector>
 #include <QtGlobal>
@@ -20,6 +21,10 @@ struct ExerciseRecommendationOptions {
     double upperToleranceRatio = 0.10;
     std::optional<quint32> randomSeed;
     RecommendationPreference preference;
+    // 追加在末尾以兼容已有的按位置聚合初始化调用。
+    // 近期不同周计划中的运动 ID -> 暴露惩罚，属于软约束，
+    // 候选不足时仍允许重新推荐。
+    QHash<QString, double> recentExercisePenalties;
 };
 
 class IExerciseRecommender {

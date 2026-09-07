@@ -1,5 +1,7 @@
 #include "recommendation/ExerciseRecommender.h"
 
+#include <QSet>
+
 #include <cmath>
 #include <limits>
 
@@ -531,6 +533,85 @@ int main()
             invalidPreferenceOptions).code
         != QStringLiteral("INVALID_OPTIONS")) {
         return 37;
+    }
+
+    // 近期出现过的运动会受到软性降权，同等强度和热量条件下优先换新。
+    Exercise recentExercise = buildFitnessExercise;
+    recentExercise.id = QStringLiteral("recent-exercise");
+    Exercise freshExercise = buildFitnessExercise;
+    freshExercise.id = QStringLiteral("fresh-exercise");
+    ExerciseRecommendationOptions recentOptions = goalOptions;
+    recentOptions.recentExercisePenalties.insert(recentExercise.id, 1.0);
+    const auto recentResult = recommender.generate(
+        buildFitnessUser,
+        196.0,
+        {recentExercise, freshExercise},
+        recentOptions);
+    if (!recentResult.ok
+        || recentResult.data.first().exerciseId
+            != QStringLiteral("fresh-exercise")) {
+        return 38;
+    }
+
+    ExerciseRecommendationOptions invalidRecentOptions = goalOptions;
+    invalidRecentOptions.recentExercisePenalties.insert(
+        QStringLiteral("bad-recent-penalty"), -0.1);
+    if (recommender.generate(
+            buildFitnessUser,
+            196.0,
+            goalDatabase,
+            invalidRecentOptions).code
+        != QStringLiteral("INVALID_OPTIONS")) {
+        return 39;
+    }
+
+    // 随机种子只在等质量候选池中选择；同种子可复现，不同种子能产生变化。
+    QVector<Exercise> equivalentExercises;
+    for (int index = 0; index < 12; ++index) {
+        Exercise equivalent = buildFitnessExercise;
+        equivalent.id = QStringLiteral("equivalent-%1").arg(index);
+        equivalent.name = equivalent.id;
+        equivalentExercises.append(equivalent);
+    }
+    ExerciseRecommendationOptions seededOptions = goalOptions;
+    seededOptions.randomSeed = 20260907;
+    const auto firstSeeded = recommender.generate(
+        buildFitnessUser, 196.0, equivalentExercises, seededOptions);
+    const auto repeatedSeeded = recommender.generate(
+        buildFitnessUser, 196.0, equivalentExercises, seededOptions);
+    if (!firstSeeded.ok
+        || !repeatedSeeded.ok
+        || firstSeeded.data.first().exerciseId
+            != repeatedSeeded.data.first().exerciseId) {
+        return 40;
+    }
+    QSet<QString> seededExerciseIds;
+    for (quint32 seed = 1; seed <= 16; ++seed) {
+        seededOptions.randomSeed = seed;
+        const auto varied = recommender.generate(
+            buildFitnessUser, 196.0, equivalentExercises, seededOptions);
+        if (!varied.ok) return 41;
+        seededExerciseIds.insert(varied.data.first().exerciseId);
+    }
+    if (seededExerciseIds.size() < 2) return 42;
+
+    // 32 个候选、最多 3 项的规模必须由有界搜索正常完成，不能组合爆炸。
+    QVector<Exercise> scaleExercises;
+    for (int index = 0; index < 32; ++index) {
+        Exercise scaleExercise = buildFitnessExercise;
+        scaleExercise.id = QStringLiteral("scale-%1").arg(index);
+        scaleExercise.name = scaleExercise.id;
+        scaleExercise.metValue = 4.0 + (index % 20) * 0.1;
+        scaleExercises.append(scaleExercise);
+    }
+    ExerciseRecommendationOptions scaleOptions = options;
+    scaleOptions.maximumDurationMinutesPerExercise = 60;
+    const auto scaleResult = recommender.generate(
+        buildFitnessUser, 500.0, scaleExercises, scaleOptions);
+    if (!scaleResult.ok
+        || scaleResult.data.isEmpty()
+        || scaleResult.data.size() > 3) {
+        return 43;
     }
 
     return 0;

@@ -79,6 +79,16 @@ int main(int argc, char* argv[])
         return 6;
     }
 
+    // 补充同质量运动候选，以验证跨周运动历史降权。
+    for (int index = 0; index < 24; ++index) {
+        Exercise exercise;
+        exercise.id = QStringLiteral("history-exercise-%1").arg(index);
+        exercise.name = exercise.id;
+        exercise.metValue = 4.0;
+        exercise.category = ExerciseCategory::Aerobic;
+        if (!exercises.add(exercise).ok) return 9;
+    }
+
     WeeklyPlanOptions generationOptions;
     generationOptions.randomSeed = 20260902;
     generationOptions.dailyTargetVariationRatio = 0.0;
@@ -112,6 +122,15 @@ int main(int argc, char* argv[])
         }
         return ids;
     };
+    const auto exerciseIdsOf = [](const WeeklyPlan& plan) {
+        QSet<QString> ids;
+        for (const DailyPlan& day : plan.days) {
+            for (const ExercisePlanItem& item : day.exercises) {
+                ids.insert(item.exerciseId);
+            }
+        }
+        return ids;
+    };
 
     const auto secondResult = service.generateAndSave(
         QStringLiteral("U001"),
@@ -133,6 +152,16 @@ int main(int argc, char* argv[])
         || firstWeekIds == secondWeekIds
         || overlap.size() >= firstWeekIds.size()) {
         return 8;
+    }
+    const QSet<QString> firstWeekExerciseIds = exerciseIdsOf(result.data);
+    const QSet<QString> secondWeekExerciseIds = exerciseIdsOf(secondResult.data);
+    QSet<QString> exerciseOverlap = firstWeekExerciseIds;
+    exerciseOverlap.intersect(secondWeekExerciseIds);
+    if (firstWeekExerciseIds.isEmpty()
+        || secondWeekExerciseIds.isEmpty()
+        || firstWeekExerciseIds == secondWeekExerciseIds
+        || exerciseOverlap.size() >= firstWeekExerciseIds.size()) {
+        return 10;
     }
     return 0;
 }

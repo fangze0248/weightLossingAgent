@@ -838,5 +838,43 @@ int main()
         return 44;
     }
 
+    // 反馈不再只在完全同分时生效：热量误差仍处于同一优质档位时，
+    // 五星候选可以优先于一星候选。
+    Recipe nearLowRated = randomBreakfastA;
+    nearLowRated.id = QStringLiteral("near-low-rated");
+    nearLowRated.totalCalories = 300.0;
+    Recipe nearHighRated = randomBreakfastB;
+    nearHighRated.id = QStringLiteral("near-high-rated");
+    nearHighRated.totalCalories = 305.0;
+    MealRecommendationOptions nearFeedbackOptions = options;
+    nearFeedbackOptions.maximumItemsPerMeal = 1;
+    nearFeedbackOptions.preference.itemWeights.insert(
+        nearLowRated.id, *feedbackWeightFromStars(1));
+    nearFeedbackOptions.preference.itemWeights.insert(
+        nearHighRated.id, *feedbackWeightFromStars(5));
+    const auto nearFeedbackResult = recommender.generate(
+        user,
+        1000.0,
+        {nearLowRated, nearHighRated, randomLunchA, randomDinnerA},
+        nearFeedbackOptions);
+    if (!nearFeedbackResult.ok
+        || nearFeedbackResult.data.breakfast.first().recipeId
+            != QStringLiteral("near-high-rated")) {
+        return 45;
+    }
+
+    // 反馈是软偏好，不能推翻明显更差的热量档位。
+    nearHighRated.totalCalories = 325.0;
+    const auto qualityFirstResult = recommender.generate(
+        user,
+        1000.0,
+        {nearLowRated, nearHighRated, randomLunchA, randomDinnerA},
+        nearFeedbackOptions);
+    if (!qualityFirstResult.ok
+        || qualityFirstResult.data.breakfast.first().recipeId
+            != QStringLiteral("near-low-rated")) {
+        return 46;
+    }
+
     return 0;
 }
