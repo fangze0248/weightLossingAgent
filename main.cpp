@@ -50,6 +50,7 @@ int main(int argc, char *argv[])
         exerciseRepository,
         recipeRepository,
         dataExchangeService);
+    // 检测内置运动数据集是否发生变化，并返回同步结果。
     const auto exerciseDatasetResult =
         datasetInitializer.importExercisesIfChanged(
             QStringLiteral("builtin_exercises"),

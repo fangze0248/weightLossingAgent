@@ -15,6 +15,10 @@ QString applicationStyleSheet()
             background: #eaf5e9;
         }
 
+        QDialog {
+            background: #eaf5e9;
+        }
+
         QWidget#authPage {
             background: #e5f3e6;
         }
@@ -220,6 +224,7 @@ QString applicationStyleSheet()
 
         QLineEdit,
         QComboBox,
+        QDateEdit,
         QSpinBox,
         QDoubleSpinBox {
             background: #fbfdfb;
@@ -232,6 +237,7 @@ QString applicationStyleSheet()
 
         QLineEdit:focus,
         QComboBox:focus,
+        QDateEdit:focus,
         QSpinBox:focus,
         QDoubleSpinBox:focus {
             background: white;
@@ -241,6 +247,79 @@ QString applicationStyleSheet()
         QComboBox::drop-down {
             border: none;
             width: 26px;
+        }
+
+        QComboBox QAbstractItemView {
+            background: #fbfdfb;
+            alternate-background-color: #f2f8f3;
+            color: #26382b;
+            border: 1px solid #bcd5bf;
+            selection-background-color: #67b96e;
+            selection-color: white;
+            outline: 0;
+            padding: 3px;
+        }
+
+        QComboBox QAbstractItemView::item {
+            min-height: 30px;
+            padding: 4px 8px;
+        }
+
+        QCalendarWidget {
+            background: white;
+            border: 1px solid #bcd5bf;
+        }
+
+        QCalendarWidget QWidget#qt_calendar_navigationbar {
+            background: #2f873c;
+        }
+
+        QCalendarWidget QToolButton {
+            background: transparent;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            padding: 6px;
+            font-weight: 700;
+        }
+
+        QCalendarWidget QToolButton:hover {
+            background: #246f31;
+        }
+
+        QCalendarWidget QToolButton::menu-indicator {
+            image: none;
+        }
+
+        QCalendarWidget QSpinBox {
+            background: white;
+            color: #26382b;
+            selection-background-color: #67b96e;
+            selection-color: white;
+        }
+
+        QCalendarWidget QMenu {
+            background: white;
+            color: #26382b;
+            border: 1px solid #bcd5bf;
+        }
+
+        QCalendarWidget QMenu::item:selected {
+            background: #67b96e;
+            color: white;
+        }
+
+        QCalendarWidget QAbstractItemView:enabled {
+            background: white;
+            alternate-background-color: #f4faf4;
+            color: #26382b;
+            selection-background-color: #3f9f4b;
+            selection-color: white;
+            outline: 0;
+        }
+
+        QCalendarWidget QAbstractItemView:disabled {
+            color: #a8b2aa;
         }
 
         QPushButton {

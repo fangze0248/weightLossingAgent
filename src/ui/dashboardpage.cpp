@@ -6,6 +6,7 @@
 #include "interfaces/IUserRepository.h"
 #include "session/sessionmanager.h"
 #include "ui/feedbackdialog.h"
+#include "ui/macronutrientchart.h"
 #include "ui/profiledialog.h"
 
 #include <QAbstractItemView>
@@ -165,6 +166,7 @@ DashboardPage::DashboardPage(IUserRepository& userRepository,
     recommendationSummaryLabel_ = new QLabel(recommendationCard);
     recommendationSummaryLabel_->setWordWrap(true);
     recommendationSummaryLabel_->setProperty("role", "summaryBlock");
+    macronutrientChart_ = new MacronutrientChart(recommendationCard);
 
     auto* recommendationLayout = new QVBoxLayout(recommendationCard);
     recommendationLayout->setContentsMargins(20, 18, 20, 18);
@@ -174,6 +176,7 @@ DashboardPage::DashboardPage(IUserRepository& userRepository,
     recommendationLayout->addWidget(exerciseRecommendationLabel_);
     recommendationLayout->addWidget(mealRecommendationLabel_);
     recommendationLayout->addWidget(recommendationSummaryLabel_);
+    recommendationLayout->addWidget(macronutrientChart_);
     recommendationLayout->addStretch();
 
     auto* planCard = new QFrame(this);
@@ -347,6 +350,7 @@ void DashboardPage::displaySelectedDay(int row)
         || row < 0
         || row >= currentPlan_->days.size()) {
         checkInButton_->setEnabled(false);
+        macronutrientChart_->clearNutrition();
         return;
     }
 
@@ -363,6 +367,7 @@ void DashboardPage::displaySelectedDay(int row)
             .arg(day.calorieNeed.recommendedIntake, 0, 'f', 0)
             .arg(day.meals.totalCalories, 0, 'f', 0)
             .arg(day.totalCaloriesBurned, 0, 'f', 0));
+    macronutrientChart_->setNutrition(day.meals.totalNutrition);
     checkInButton_->setEnabled(!day.completed);
     checkInButton_->setText(day.completed
                                 ? QStringLiteral("该日期已完成打卡")
@@ -385,6 +390,7 @@ void DashboardPage::clearDashboard(const QString& message)
         QStringLiteral("登录后显示运动推荐"));
     mealRecommendationLabel_->setText(QStringLiteral("登录后显示食谱推荐"));
     recommendationSummaryLabel_->clear();
+    macronutrientChart_->clearNutrition();
 }
 
 void DashboardPage::updateProfilePanel(const UserProfile& user,
@@ -430,6 +436,7 @@ void DashboardPage::updatePlanPanel()
             QStringLiteral("等待推荐模块生成并保存 WeeklyPlan 后，这里会显示食谱推荐。"));
         recommendationSummaryLabel_->setText(
             QStringLiteral("当前展示的是空状态，不是虚构的算法结果。"));
+        macronutrientChart_->clearNutrition();
         checkInButton_->setEnabled(false);
         return;
     }

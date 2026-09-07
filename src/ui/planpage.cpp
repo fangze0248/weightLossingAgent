@@ -91,7 +91,7 @@ PlanPage::PlanPage(IPlanRepository& repository,
     summaryLabel_->setWordWrap(true);
     summaryLabel_->setProperty("role", "resultCard");
 
-    planTable_ = new QTableWidget(0, 8, this);
+    planTable_ = new QTableWidget(0, 9, this);
     planTable_->setHorizontalHeaderLabels({
         QStringLiteral("日期"),
         QStringLiteral("建议摄入"),
@@ -100,6 +100,7 @@ PlanPage::PlanPage(IPlanRepository& repository,
         QStringLiteral("早餐"),
         QStringLiteral("午餐"),
         QStringLiteral("晚餐"),
+        QStringLiteral("加餐"),
         QStringLiteral("饮食总热量")
     });
     planTable_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
@@ -236,6 +237,9 @@ void PlanPage::displayPlan(const WeeklyPlan& plan)
             row, 6, new QTableWidgetItem(mealSummary(day.meals.dinner)));
         planTable_->setItem(
             row, 7, new QTableWidgetItem(
+                        mealSummary(day.meals.snacks)));
+        planTable_->setItem(
+            row, 8, new QTableWidgetItem(
                         QString::number(day.meals.totalCalories, 'f', 0)));
     }
 }

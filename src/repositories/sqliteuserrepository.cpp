@@ -32,6 +32,8 @@ UserProfile userFromQuery(const QSqlQuery& query)
                             query.value(QStringLiteral("exercise_goal"))
                                 .toString())
                             .value_or(ExerciseGoal::LightHealth);
+    user.includeSnack =
+        query.value(QStringLiteral("include_snack")).toInt() != 0;
     user.weeklyGoalKg = query.value(QStringLiteral("weekly_goal_kg")).toDouble();
     user.dietContributionRatio =
         query.value(QStringLiteral("diet_contribution_ratio")).toDouble();
@@ -80,6 +82,8 @@ void bindUser(QSqlQuery& query, const UserProfile& user)
     query.bindValue(QStringLiteral(":goal_type"), toStorageString(user.goalType));
     query.bindValue(QStringLiteral(":exercise_goal"),
                     toStorageString(user.exerciseGoal));
+    query.bindValue(QStringLiteral(":include_snack"),
+                    user.includeSnack ? 1 : 0);
     query.bindValue(QStringLiteral(":weekly_goal_kg"), user.weeklyGoalKg);
     query.bindValue(QStringLiteral(":diet_ratio"), user.dietContributionRatio);
     query.bindValue(QStringLiteral(":disliked_exercises"),
@@ -133,11 +137,12 @@ ServiceResult<UserProfile> SqliteUserRepository::add(const UserProfile& user)
     query.prepare(QStringLiteral(
         "INSERT INTO users (id, name, gender, age, height_cm, weight_kg, "
         "target_weight_kg, average_daily_steps, activity_level, goal_type, "
-        "exercise_goal, weekly_goal_kg, "
+        "exercise_goal, include_snack, weekly_goal_kg, "
         "diet_contribution_ratio, disliked_exercise_ids_json, "
         "disliked_recipe_ids_json) VALUES (:id, :name, :gender, :age, "
         ":height_cm, :weight_kg, :target_weight_kg, :average_daily_steps, "
-        ":activity_level, :goal_type, :exercise_goal, :weekly_goal_kg, "
+        ":activity_level, :goal_type, :exercise_goal, :include_snack, "
+        ":weekly_goal_kg, "
         ":diet_ratio, "
         ":disliked_exercises, "
         ":disliked_recipes)"));
@@ -162,6 +167,7 @@ ServiceResult<UserProfile> SqliteUserRepository::update(const UserProfile& user)
         "average_daily_steps = :average_daily_steps, "
         "activity_level = :activity_level, "
         "goal_type = :goal_type, exercise_goal = :exercise_goal, "
+        "include_snack = :include_snack, "
         "weekly_goal_kg = :weekly_goal_kg, "
         "diet_contribution_ratio = :diet_ratio, "
         "disliked_exercise_ids_json = :disliked_exercises, "

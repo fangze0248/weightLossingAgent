@@ -11,6 +11,7 @@ class IFeedbackService;
 class IPlanRepository;
 class IUserRepository;
 class QLabel;
+class MacronutrientChart;
 class QPushButton;
 class QTableWidget;
 class SessionManager;
@@ -59,6 +60,7 @@ private:
     QLabel* exerciseRecommendationLabel_ = nullptr;
     QLabel* mealRecommendationLabel_ = nullptr;
     QLabel* recommendationSummaryLabel_ = nullptr;
+    MacronutrientChart* macronutrientChart_ = nullptr;
     QLabel* planPeriodLabel_ = nullptr;
     QTableWidget* checkInTable_ = nullptr;
     QPushButton* checkInButton_ = nullptr;

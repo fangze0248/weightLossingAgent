@@ -115,6 +115,8 @@ set(PROJECT_SOURCES
         src/ui/healthpage.h
         src/ui/loginpage.cpp
         src/ui/loginpage.h
+        src/ui/macronutrientchart.cpp
+        src/ui/macronutrientchart.h
         src/ui/planpage.cpp
         src/ui/planpage.h
         src/ui/profiledialog.cpp

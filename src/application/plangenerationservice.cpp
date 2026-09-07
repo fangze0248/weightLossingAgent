@@ -320,17 +320,34 @@ ServiceResult<WeeklyPlan> PlanGenerationService::generateAndSave(
             exerciseResult.warnings);
     }
 
+    // The profile is the source of truth for meal structure. Adding a snack
+    // redistributes the same daily calorie target instead of increasing it.
+    WeeklyPlanOptions effectiveOptions = options;
+    effectiveOptions.mealOptions.includeSnack = userResult.data->includeSnack;
+    if (userResult.data->includeSnack) {
+        effectiveOptions.mealOptions.breakfastRatio = 0.27;
+        effectiveOptions.mealOptions.lunchRatio = 0.36;
+        effectiveOptions.mealOptions.dinnerRatio = 0.27;
+        effectiveOptions.mealOptions.snackRatio = 0.10;
+    } else {
+        effectiveOptions.mealOptions.breakfastRatio = 0.30;
+        effectiveOptions.mealOptions.lunchRatio = 0.40;
+        effectiveOptions.mealOptions.dinnerRatio = 0.30;
+        effectiveOptions.mealOptions.snackRatio = 0.0;
+    }
+
     const std::optional<NutritionFacts> candidateNutritionTarget =
         nutritionTargetForCandidateQuery(
             calorieResult.data.recommendedIntake,
-            options);
+            effectiveOptions);
+
     const auto recipeResult = findRecipeCandidates(
         recipeRepository_,
         *userResult.data,
         calorieResult.data.recommendedIntake,
-        options.mealOptions,
+        effectiveOptions.mealOptions,
         candidateNutritionTarget,
-        options.randomSeed);
+        effectiveOptions.randomSeed);
     if (!recipeResult.ok) {
         return ServiceResult<WeeklyPlan>::failure(
             recipeResult.code,
@@ -340,7 +357,6 @@ ServiceResult<WeeklyPlan> PlanGenerationService::generateAndSave(
 
     // 生成新计划前，把历史享受度反馈汇总成偏好注入推荐选项；
     // 汇总失败时保持空偏好，不阻断计划生成。
-    WeeklyPlanOptions effectiveOptions = options;
     const auto recipePreference = feedbackService_.buildPreference(
         normalizedUserId, RecommendationItemType::Recipe);
     if (recipePreference.ok) {

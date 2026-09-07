@@ -2,6 +2,7 @@
 
 #include "interfaces/IUserRepository.h"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
@@ -54,6 +55,11 @@ ProfileDialog::ProfileDialog(IUserRepository& repository,
         QStringLiteral("强身健体"), static_cast<int>(ExerciseGoal::BuildFitness));
     exerciseGoalCombo_->addItem(
         QStringLiteral("增肌塑形"), static_cast<int>(ExerciseGoal::MuscleGain));
+
+    includeSnackCheckBox_ = new QCheckBox(
+        QStringLiteral("食谱计划中包含加餐"), this);
+    includeSnackCheckBox_->setToolTip(QStringLiteral(
+        "勾选后，加餐约占每日建议摄入热量的 10%，每日总热量保持不变。"));
 
     ageSpin_ = new QSpinBox(this);
     ageSpin_->setRange(18, 100);
@@ -114,6 +120,7 @@ ProfileDialog::ProfileDialog(IUserRepository& repository,
                        averageDailyStepsSpin_);
     formLayout->addRow(QStringLiteral("每周减重目标："), weeklyGoalSpin_);
     formLayout->addRow(QStringLiteral("运动目标："), exerciseGoalCombo_);
+    formLayout->addRow(QStringLiteral("饮食安排："), includeSnackCheckBox_);
     formLayout->addRow(QStringLiteral("饮食贡献比例："), dietRatioSpin_);
 
     saveButton_ = new QPushButton(
@@ -143,6 +150,9 @@ ProfileDialog::ProfileDialog(IUserRepository& repository,
 
 void ProfileDialog::setUser(const UserProfile& user)
 {
+    // Keep preferences that this dialog does not edit, such as feedback-based
+    // dislikes, when an existing profile is saved.
+    savedUser_ = user;
     idEdit_->setText(user.id);
     nameEdit_->setText(user.name);
     const int genderIndex = genderCombo_->findData(static_cast<int>(user.gender));
@@ -152,6 +162,7 @@ void ProfileDialog::setUser(const UserProfile& user)
     if (exerciseGoalIndex >= 0) {
         exerciseGoalCombo_->setCurrentIndex(exerciseGoalIndex);
     }
+    includeSnackCheckBox_->setChecked(user.includeSnack);
     ageSpin_->setValue(user.age);
     heightSpin_->setValue(user.heightCm);
     weightSpin_->setValue(user.weightKg);
@@ -168,12 +179,13 @@ UserProfile ProfileDialog::savedUser() const
 
 UserProfile ProfileDialog::buildUser() const
 {
-    UserProfile user;
+    UserProfile user = mode_ == Mode::Edit ? savedUser_ : UserProfile{};
     user.id = idEdit_->text().trimmed();
     user.name = nameEdit_->text().trimmed();
     user.gender = static_cast<Gender>(genderCombo_->currentData().toInt());
     user.exerciseGoal =
         static_cast<ExerciseGoal>(exerciseGoalCombo_->currentData().toInt());
+    user.includeSnack = includeSnackCheckBox_->isChecked();
     user.age = ageSpin_->value();
     user.heightCm = heightSpin_->value();
     user.weightKg = weightSpin_->value();

@@ -104,10 +104,13 @@ int main(int argc, char* argv[])
         return 30;
     }
     if (result.data.days.size() != 7) return 31;
+    for (const DailyPlan& day : result.data.days) {
+        if (!day.meals.snacks.isEmpty()) return 32;
+    }
 
-    const auto savedPlans = plans.findByUserId(QStringLiteral("U001"));
-    if (!savedPlans.ok || savedPlans.data.size() != 1) return 4;
-    if (savedPlans.data.first().planId != result.data.planId) return 5;
+    const auto firstSavedPlans = plans.findByUserId(QStringLiteral("U001"));
+    if (!firstSavedPlans.ok || firstSavedPlans.data.size() != 1) return 4;
+    if (firstSavedPlans.data.first().planId != result.data.planId) return 5;
 
     const auto recipeIdsOf = [](const WeeklyPlan& plan) {
         QSet<QString> ids;
@@ -163,6 +166,36 @@ int main(int argc, char* argv[])
         || exerciseOverlap.size() >= firstWeekExerciseIds.size()) {
         return 10;
     }
+
+    Recipe snack;
+    snack.id = QStringLiteral("R_SNACK_TEST");
+    snack.name = QStringLiteral("测试加餐");
+    snack.totalCalories = 180.0;
+    snack.nutritionPerServing.caloriesKcal = 180.0;
+    snack.nutritionPerServing.proteinG = 8.0;
+    snack.nutritionPerServing.carbohydrateG = 20.0;
+    snack.nutritionPerServing.fatG = 7.0;
+    snack.servings = 1;
+    snack.mealType = MealType::Snack;
+    if (!recipes.add(snack).ok) return 40;
+
+    const auto userResult = users.findById(QStringLiteral("U001"));
+    if (!userResult.ok || !userResult.data.has_value()) return 41;
+    UserProfile user = *userResult.data;
+    user.includeSnack = true;
+    if (!users.update(user).ok) return 42;
+
+    const auto snackResult = service.generateAndSave(
+        QStringLiteral("U001"),
+        QDate(2026, 9, 7),
+        generationOptions);
+    if (!snackResult.ok || snackResult.data.days.size() != 7) return 43;
+    for (const DailyPlan& day : snackResult.data.days) {
+        if (day.meals.snacks.isEmpty()) return 44;
+    }
+
+    const auto savedPlans = plans.findByUserId(QStringLiteral("U001"));
+    if (!savedPlans.ok || savedPlans.data.size() != 3) return 45;
     return 0;
 }
 

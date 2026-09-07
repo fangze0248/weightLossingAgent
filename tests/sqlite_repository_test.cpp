@@ -24,8 +24,8 @@ int main(int argc, char* argv[])
     QString error;
     if (!manager.open(&error)) return 2;
 
-    // Simulate a database created by schema version 4. initialize() must add
-    // average_daily_steps without requiring the user to edit the DB file.
+    // Simulate an older database. initialize() must add newly introduced user
+    // columns without requiring the user to edit the DB file.
     QSqlQuery legacySchemaQuery(manager.database());
     if (!legacySchemaQuery.exec(QStringLiteral(R"SQL(
         CREATE TABLE users (
@@ -52,7 +52,7 @@ int main(int argc, char* argv[])
     QSqlQuery versionQuery(manager.database());
     if (!versionQuery.exec(QStringLiteral("PRAGMA user_version"))
         || !versionQuery.next()
-        || versionQuery.value(0).toInt() != 5) {
+        || versionQuery.value(0).toInt() != 6) {
         return 26;
     }
 
@@ -64,14 +64,17 @@ int main(int argc, char* argv[])
 
     const auto users = userRepository.findAll();
     if (!users.ok || users.data.size() != 1
-        || users.data.first().averageDailySteps != 4000) return 5;
+        || users.data.first().averageDailySteps != 4000
+        || users.data.first().includeSnack) return 5;
 
     UserProfile updatedUser = users.data.first();
     updatedUser.averageDailySteps = 8250;
+    updatedUser.includeSnack = true;
     if (!userRepository.update(updatedUser).ok) return 30;
     const auto reloadedUser = userRepository.findById(updatedUser.id);
     if (!reloadedUser.ok || !reloadedUser.data.has_value()
-        || reloadedUser.data->averageDailySteps != 8250) return 31;
+        || reloadedUser.data->averageDailySteps != 8250
+        || !reloadedUser.data->includeSnack) return 31;
 
     const auto seededExercises = exerciseRepository.findAll();
     if (!seededExercises.ok || seededExercises.data.size() != 3) return 6;

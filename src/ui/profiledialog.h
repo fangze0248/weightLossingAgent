@@ -5,6 +5,7 @@
 #include <QDialog>
 
 class IUserRepository;
+class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
 class QLineEdit;
@@ -39,6 +40,7 @@ private:
     QLineEdit* nameEdit_ = nullptr;
     QComboBox* genderCombo_ = nullptr;
     QComboBox* exerciseGoalCombo_ = nullptr;
+    QCheckBox* includeSnackCheckBox_ = nullptr;
     QSpinBox* ageSpin_ = nullptr;
     QDoubleSpinBox* heightSpin_ = nullptr;
     QDoubleSpinBox* weightSpin_ = nullptr;

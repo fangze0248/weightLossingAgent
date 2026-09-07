@@ -285,6 +285,28 @@ bool DatabaseManager::ensureUserExerciseGoalColumn(QString* errorMessage)
         errorMessage);
 }
 
+bool DatabaseManager::ensureUserIncludeSnackColumn(QString* errorMessage)
+{
+    QSqlQuery query(database_);
+    if (!query.exec(QStringLiteral("PRAGMA table_info(users)"))) {
+        if (errorMessage) *errorMessage = query.lastError().text();
+        return false;
+    }
+
+    while (query.next()) {
+        if (query.value(1).toString() == QStringLiteral("include_snack")) {
+            return true;
+        }
+    }
+
+    // Preserve the previous behaviour for existing accounts.
+    return executeStatement(
+        QStringLiteral(
+            "ALTER TABLE users ADD COLUMN include_snack INTEGER NOT NULL "
+            "DEFAULT 0 CHECK(include_snack IN (0, 1))"),
+        errorMessage);
+}
+
 bool DatabaseManager::ensureFeedbackColumns(QString* errorMessage)
 {
     QSqlQuery query(database_);
@@ -347,6 +369,8 @@ bool DatabaseManager::initialize(QString* errorMessage)
                 goal_type TEXT NOT NULL CHECK(goal_type IN ('lose', 'maintain', 'gain')),
                 exercise_goal TEXT NOT NULL DEFAULT 'light_health'
                 CHECK(exercise_goal IN ('light_health', 'build_fitness', 'muscle_gain')),
+                include_snack INTEGER NOT NULL DEFAULT 0
+                CHECK(include_snack IN (0, 1)),
                 weekly_goal_kg REAL NOT NULL DEFAULT 0.5,
                 diet_contribution_ratio REAL NOT NULL DEFAULT 0.7,
                 disliked_exercise_ids_json TEXT NOT NULL DEFAULT '[]',
@@ -445,6 +469,9 @@ bool DatabaseManager::initialize(QString* errorMessage)
     if (!ensureUserExerciseGoalColumn(errorMessage)) {
         return false;
     }
+    if (!ensureUserIncludeSnackColumn(errorMessage)) {
+        return false;
+    }
     if (!ensureFeedbackColumns(errorMessage)) {
         return false;
     }
@@ -465,7 +492,7 @@ bool DatabaseManager::initialize(QString* errorMessage)
     for (const QString& statement : searchIndexes) {
         if (!executeStatement(statement, errorMessage)) return false;
     }
-    return executeStatement(QStringLiteral("PRAGMA user_version = 5"),
+    return executeStatement(QStringLiteral("PRAGMA user_version = 6"),
                             errorMessage);
 }
 

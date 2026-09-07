@@ -23,6 +23,9 @@ struct UserProfile {
     GoalType goalType = GoalType::Lose;
     ExerciseGoal exerciseGoal = ExerciseGoal::LightHealth;
 
+    // Whether the generated daily meal plan may contain a snack.
+    bool includeSnack = false;
+
     // Magnitude of the weekly goal. For weight loss, allowed UI values are
     // normally 0.5, 1.0, and 1.5 kg.
     double weeklyGoalKg = 0.5;

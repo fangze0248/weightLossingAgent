@@ -291,7 +291,7 @@ void HealthPage::calculateHealth()
 
 void HealthPage::saveUser()
 {
-    const UserProfile user = buildUserProfile();
+    UserProfile user = buildUserProfile();
     if (user.id.isEmpty() || user.name.isEmpty()) {
         QMessageBox::warning(
             this,
@@ -309,6 +309,16 @@ void HealthPage::saveUser()
     }
 
     const bool isUpdate = existingResult.data.has_value();
+    if (isUpdate) {
+        // This page edits health measurements only. Preserve meal, exercise,
+        // and feedback preferences maintained by the profile/recommendation UI.
+        const UserProfile& storedUser = *existingResult.data;
+        user.exerciseGoal = storedUser.exerciseGoal;
+        user.includeSnack = storedUser.includeSnack;
+        user.activityLevel = storedUser.activityLevel;
+        user.dislikedExerciseIds = storedUser.dislikedExerciseIds;
+        user.dislikedRecipeIds = storedUser.dislikedRecipeIds;
+    }
     const auto saveResult = isUpdate
                                 ? userRepository_.update(user)
                                 : userRepository_.add(user);
