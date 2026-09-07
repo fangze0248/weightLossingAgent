@@ -26,8 +26,46 @@ constexpr int kRecipeExplorationCandidatesPerMeal = 32;
 constexpr int kExerciseCandidateLimit = 32;
 constexpr double kReferenceExerciseMinutes = 30.0;
 constexpr int kRecentPlanCount = 3;
+constexpr double kProteinEnergyRatio = 0.20;
+constexpr double kCarbohydrateEnergyRatio = 0.50;
+constexpr double kFatEnergyRatio = 0.30;
+constexpr double kCaloriesPerGramProtein = 4.0;
+constexpr double kCaloriesPerGramCarbohydrate = 4.0;
+constexpr double kCaloriesPerGramFat = 9.0;
 constexpr double kRecentPlanPenalties[kRecentPlanCount] = {
     1.0, 0.6, 0.3};
+
+std::optional<NutritionFacts> nutritionTargetForCandidateQuery(
+    double dailyTargetCalories,
+    const WeeklyPlanOptions& options)
+{
+    if (options.mealOptions.nutritionTarget.has_value()) {
+        const NutritionFacts& target =
+            *options.mealOptions.nutritionTarget;
+        // 核心推荐允许调用方只指定部分营养素；数据库的综合偏差排序
+        // 只有在三项目标齐全时启用，避免除以 0 或改变旧调用语义。
+        if (std::isfinite(target.proteinG) && target.proteinG > 0.0
+            && std::isfinite(target.carbohydrateG)
+            && target.carbohydrateG > 0.0
+            && std::isfinite(target.fatG) && target.fatG > 0.0) {
+            return target;
+        }
+        return std::nullopt;
+    }
+    if (!options.autoCalculateNutritionTarget) {
+        return std::nullopt;
+    }
+
+    NutritionFacts target;
+    target.caloriesKcal = dailyTargetCalories;
+    target.proteinG = dailyTargetCalories
+        * kProteinEnergyRatio / kCaloriesPerGramProtein;
+    target.carbohydrateG = dailyTargetCalories
+        * kCarbohydrateEnergyRatio / kCaloriesPerGramCarbohydrate;
+    target.fatG = dailyTargetCalories
+        * kFatEnergyRatio / kCaloriesPerGramFat;
+    return target;
+}
 
 void appendUniqueRecipes(QVector<Recipe>* destination,
                          QSet<QString>* acceptedIds,
@@ -47,6 +85,7 @@ ServiceResult<QVector<Recipe>> findRecipeCandidates(
     const UserProfile& user,
     double dailyTargetCalories,
     const MealRecommendationOptions& options,
+    const std::optional<NutritionFacts>& dailyNutritionTarget,
     const std::optional<quint32>& weeklyRandomSeed)
 {
     QVector<Recipe> candidates;
@@ -59,6 +98,13 @@ ServiceResult<QVector<Recipe>> findRecipeCandidates(
         filter.mealType = mealType;
         filter.excludedIds = user.dislikedRecipeIds;
         filter.targetCalories = dailyTargetCalories * ratio;
+        if (dailyNutritionTarget.has_value()) {
+            filter.targetProteinG =
+                dailyNutritionTarget->proteinG * ratio;
+            filter.targetCarbohydrateG =
+                dailyNutritionTarget->carbohydrateG * ratio;
+            filter.targetFatG = dailyNutritionTarget->fatG * ratio;
+        }
         filter.limit = kRecipeQueryLimitPerMeal;
         const auto result = repository.findAll(filter);
         if (!result.ok) {
@@ -260,11 +306,16 @@ ServiceResult<WeeklyPlan> PlanGenerationService::generateAndSave(
             exerciseResult.warnings);
     }
 
+    const std::optional<NutritionFacts> candidateNutritionTarget =
+        nutritionTargetForCandidateQuery(
+            calorieResult.data.recommendedIntake,
+            options);
     const auto recipeResult = findRecipeCandidates(
         recipeRepository_,
         *userResult.data,
         calorieResult.data.recommendedIntake,
         options.mealOptions,
+        candidateNutritionTarget,
         options.randomSeed);
     if (!recipeResult.ok) {
         return ServiceResult<WeeklyPlan>::failure(

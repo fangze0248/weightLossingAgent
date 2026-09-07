@@ -24,6 +24,11 @@ struct RecipeFilter {
     std::optional<double> minimumFiberG;
     std::optional<double> maximumSodiumMg;
     std::optional<double> targetCalories;
+    // 用于候选排序的餐次营养目标。三个字段应同时提供：先按热量
+    // 接近程度排序，再按蛋白质、碳水和脂肪的平均相对偏差排序。
+    std::optional<double> targetProteinG;
+    std::optional<double> targetCarbohydrateG;
+    std::optional<double> targetFatG;
     int limit = 0;
 };
 

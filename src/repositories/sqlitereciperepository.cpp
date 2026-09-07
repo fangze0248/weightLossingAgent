@@ -6,6 +6,7 @@
 #include <QSqlQuery>
 #include <QVariant>
 
+#include <cmath>
 #include <utility>
 
 namespace {
@@ -119,6 +120,28 @@ ServiceResult<QVector<Recipe>> SqliteRecipeRepository::findAll(
             QStringLiteral("查询数量限制不能为负数。"));
     }
 
+    const bool hasAnyNutritionTarget =
+        filter.targetProteinG.has_value()
+        || filter.targetCarbohydrateG.has_value()
+        || filter.targetFatG.has_value();
+    const bool hasCompleteNutritionTarget =
+        filter.targetProteinG.has_value()
+        && filter.targetCarbohydrateG.has_value()
+        && filter.targetFatG.has_value();
+    const auto isFinitePositive = [](double value) {
+        return std::isfinite(value) && value > 0.0;
+    };
+    if (hasAnyNutritionTarget
+        && (!hasCompleteNutritionTarget
+            || !isFinitePositive(*filter.targetProteinG)
+            || !isFinitePositive(*filter.targetCarbohydrateG)
+            || !isFinitePositive(*filter.targetFatG))) {
+        return ServiceResult<QVector<Recipe>>::failure(
+            QStringLiteral("INVALID_RECIPE_FILTER"),
+            QStringLiteral(
+                "蛋白质、碳水和脂肪目标必须同时提供，且均为大于 0 的有限数。"));
+    }
+
     QString sql = QStringLiteral("SELECT * FROM recipes WHERE 1 = 1");
     if (!filter.keyword.trimmed().isEmpty()) {
         sql += QStringLiteral(
@@ -176,10 +199,19 @@ ServiceResult<QVector<Recipe>> SqliteRecipeRepository::findAll(
             .arg(placeholders.join(QLatin1Char(',')));
     }
 
-    if (filter.targetCalories.has_value()) {
+    if (filter.targetCalories.has_value()
+        && hasCompleteNutritionTarget) {
         sql += QStringLiteral(
             " ORDER BY ABS(total_calories - :target_calories), "
-            "protein_g DESC, fiber_g DESC, name");
+            "(ABS(protein_g - :target_protein) / :target_protein + "
+            "ABS(carbohydrate_g - :target_carbohydrate) "
+            "/ :target_carbohydrate + "
+            "ABS(fat_g - :target_fat) / :target_fat), "
+            "fiber_g DESC, name");
+    } else if (filter.targetCalories.has_value()) {
+        sql += QStringLiteral(
+            " ORDER BY ABS(total_calories - :target_calories), "
+            "fiber_g DESC, name");
     } else {
         sql += QStringLiteral(" ORDER BY meal_type, total_calories, name");
     }
@@ -244,6 +276,15 @@ ServiceResult<QVector<Recipe>> SqliteRecipeRepository::findAll(
     if (filter.targetCalories.has_value()) {
         query.bindValue(
             QStringLiteral(":target_calories"), *filter.targetCalories);
+    }
+    if (hasCompleteNutritionTarget) {
+        query.bindValue(
+            QStringLiteral(":target_protein"), *filter.targetProteinG);
+        query.bindValue(
+            QStringLiteral(":target_carbohydrate"),
+            *filter.targetCarbohydrateG);
+        query.bindValue(
+            QStringLiteral(":target_fat"), *filter.targetFatG);
     }
     if (applySqlLimit) {
         query.bindValue(QStringLiteral(":limit"), filter.limit);

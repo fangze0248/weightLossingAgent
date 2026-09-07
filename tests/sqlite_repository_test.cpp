@@ -163,6 +163,58 @@ int main(int argc, char* argv[])
         return 24;
     }
 
+    Recipe macroBalancedRecipe;
+    macroBalancedRecipe.id = QStringLiteral("macro-balanced");
+    macroBalancedRecipe.name = QStringLiteral("Macro balanced");
+    macroBalancedRecipe.mealType = MealType::Snack;
+    macroBalancedRecipe.totalCalories = 777.0;
+    macroBalancedRecipe.nutritionPerServing.caloriesKcal = 777.0;
+    macroBalancedRecipe.nutritionPerServing.proteinG = 30.0;
+    macroBalancedRecipe.nutritionPerServing.carbohydrateG = 100.0;
+    macroBalancedRecipe.nutritionPerServing.fatG = 28.5;
+    macroBalancedRecipe.nutritionPerServing.fiberG = 5.0;
+
+    Recipe proteinHeavyRecipe = macroBalancedRecipe;
+    proteinHeavyRecipe.id = QStringLiteral("protein-heavy");
+    proteinHeavyRecipe.name = QStringLiteral("Protein heavy");
+    proteinHeavyRecipe.nutritionPerServing.proteinG = 60.0;
+    proteinHeavyRecipe.nutritionPerServing.carbohydrateG = 70.0;
+    // 即使不均衡方案的纤维更高，三大营养素偏差仍应优先。
+    proteinHeavyRecipe.nutritionPerServing.fiberG = 20.0;
+
+    if (!recipeRepository.add(macroBalancedRecipe).ok
+        || !recipeRepository.add(proteinHeavyRecipe).ok) {
+        return 30;
+    }
+
+    RecipeFilter macroTargetFilter;
+    macroTargetFilter.mealType = MealType::Snack;
+    macroTargetFilter.targetCalories = 777.0;
+    macroTargetFilter.targetProteinG = 30.0;
+    macroTargetFilter.targetCarbohydrateG = 100.0;
+    macroTargetFilter.targetFatG = 28.5;
+    macroTargetFilter.limit = 1;
+    const auto macroRankedRecipes =
+        recipeRepository.findAll(macroTargetFilter);
+    if (!macroRankedRecipes.ok
+        || macroRankedRecipes.data.size() != 1
+        || macroRankedRecipes.data.first().id
+            != macroBalancedRecipe.id) {
+        return 31;
+    }
+
+    RecipeFilter incompleteMacroTargetFilter;
+    incompleteMacroTargetFilter.targetCalories = 777.0;
+    incompleteMacroTargetFilter.targetProteinG = 30.0;
+    if (recipeRepository.findAll(incompleteMacroTargetFilter).ok) {
+        return 32;
+    }
+
+    if (!recipeRepository.remove(macroBalancedRecipe.id).data
+        || !recipeRepository.remove(proteinHeavyRecipe.id).data) {
+        return 33;
+    }
+
     RecipeFilter candidateFilter;
     candidateFilter.mealType = MealType::Lunch;
     candidateFilter.minimumProteinG = 35.0;
