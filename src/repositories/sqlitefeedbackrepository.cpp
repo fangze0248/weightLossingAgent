@@ -1,5 +1,8 @@
 #include "sqlitefeedbackrepository.h"
 
+#include "database/modeljsoncodec.h"
+
+#include <QDate>
 #include <QDateTime>
 #include <QSqlError>
 #include <QSqlQuery>
@@ -33,6 +36,14 @@ Feedback feedbackFromQuery(const QSqlQuery& query)
     feedback.itemId = query.value(QStringLiteral("item_id")).toString();
     feedback.rating = static_cast<FeedbackRating>(
         query.value(QStringLiteral("rating")).toInt());
+    feedback.enjoymentStars =
+        query.value(QStringLiteral("enjoyment_stars")).toInt();
+    feedback.keywords = model_json_codec::stringListFromJson(
+        query.value(QStringLiteral("keywords_json")).toString());
+    feedback.planId = query.value(QStringLiteral("plan_id")).toString();
+    feedback.feedbackDate = QDate::fromString(
+        query.value(QStringLiteral("feedback_date")).toString(),
+        Qt::ISODate);
     feedback.comment = query.value(QStringLiteral("comment")).toString();
     feedback.createdAt = QDateTime::fromString(
         query.value(QStringLiteral("created_at")).toString(), Qt::ISODateWithMs);
@@ -78,17 +89,33 @@ ServiceResult<Feedback> SqliteFeedbackRepository::save(const Feedback& feedback)
     QSqlQuery query(database_);
     query.prepare(QStringLiteral(
         "INSERT INTO feedback "
-        "(id, user_id, item_type, item_id, rating, comment, created_at) "
-        "VALUES (:id, :user_id, :item_type, :item_id, :rating, :comment, :created_at) "
+        "(id, user_id, item_type, item_id, rating, enjoyment_stars, "
+        "keywords_json, plan_id, feedback_date, comment, created_at) "
+        "VALUES (:id, :user_id, :item_type, :item_id, :rating, :enjoyment_stars, "
+        ":keywords_json, :plan_id, :feedback_date, :comment, :created_at) "
         "ON CONFLICT(id) DO UPDATE SET user_id = excluded.user_id, "
         "item_type = excluded.item_type, item_id = excluded.item_id, "
-        "rating = excluded.rating, comment = excluded.comment, "
+        "rating = excluded.rating, enjoyment_stars = excluded.enjoyment_stars, "
+        "keywords_json = excluded.keywords_json, plan_id = excluded.plan_id, "
+        "feedback_date = excluded.feedback_date, comment = excluded.comment, "
         "created_at = excluded.created_at"));
     query.bindValue(QStringLiteral(":id"), stored.id);
     query.bindValue(QStringLiteral(":user_id"), stored.userId);
     query.bindValue(QStringLiteral(":item_type"), itemTypeToString(stored.itemType));
     query.bindValue(QStringLiteral(":item_id"), stored.itemId);
     query.bindValue(QStringLiteral(":rating"), static_cast<int>(stored.rating));
+    query.bindValue(QStringLiteral(":enjoyment_stars"), stored.enjoymentStars);
+    query.bindValue(
+        QStringLiteral(":keywords_json"),
+        model_json_codec::stringListToJson(stored.keywords));
+    query.bindValue(
+        QStringLiteral(":plan_id"),
+        stored.planId.isNull() ? QStringLiteral("") : stored.planId);
+    query.bindValue(
+        QStringLiteral(":feedback_date"),
+        stored.feedbackDate.isValid()
+            ? stored.feedbackDate.toString(Qt::ISODate)
+            : QStringLiteral(""));
     query.bindValue(
         QStringLiteral(":comment"),
         stored.comment.isNull() ? QStringLiteral("") : stored.comment);

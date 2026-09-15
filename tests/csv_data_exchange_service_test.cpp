@@ -53,6 +53,35 @@ int main(int argc, char* argv[])
         return 4;
     }
 
+    const QString officialCompendiumPath = directory.filePath(
+        QStringLiteral("official_compendium_export.csv"));
+    if (!writeUtf8File(
+            officialCompendiumPath,
+            QByteArray(
+                "2024 Adult Compendium of Physical Activities,,,,,,,,,,,,\n"
+                "Major Heading,,Activity Code,,,,,MET Value,,,,Activity Description,\n"
+                "Bicycling,,01010,,,,,4.0,4.0,4.0,4.0,"
+                "\"Bicycling, leisure\",\n"
+                "Conditioning Exercise,,,,,02052,,,5.0,5.0,5.0,"
+                "\"Resistance weight training, squats\",\n"))) {
+        return 24;
+    }
+    const auto officialExercises = service.importExercises(
+        officialCompendiumPath, DataFormat::Csv);
+    if (!officialExercises.ok
+        || officialExercises.data.importedRows != 2
+        || officialExercises.data.items.size() != 2
+        || officialExercises.data.items.at(0).id != QStringLiteral("01010")
+        || officialExercises.data.items.at(0).metValue != 4.0
+        || officialExercises.data.items.at(0).category
+            != ExerciseCategory::Aerobic
+        || officialExercises.data.items.at(1).id != QStringLiteral("02052")
+        || officialExercises.data.items.at(1).metValue != 5.0
+        || officialExercises.data.items.at(1).category
+            != ExerciseCategory::Strength) {
+        return 25;
+    }
+
     const QString recipePath = directory.filePath(
         QStringLiteral("recipes.csv"));
     if (!writeUtf8File(

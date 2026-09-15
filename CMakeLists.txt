@@ -41,11 +41,37 @@ target_link_libraries(persistence_core PUBLIC
 
 target_compile_features(persistence_core PUBLIC cxx_std_17)
 
+add_library(dataset_core STATIC
+    src/application/csvdataexchangeservice.h
+    src/application/csvdataexchangeservice.cpp
+    src/application/foodcompreprocessor.h
+    src/application/foodcompreprocessor.cpp
+    src/application/compendiumpreprocessor.h
+    src/application/compendiumpreprocessor.cpp
+    src/application/builtindatasetinitializer.h
+    src/application/builtindatasetinitializer.cpp
+)
+
+target_include_directories(dataset_core PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+
+target_link_libraries(dataset_core PUBLIC
+    persistence_core
+    Qt${QT_VERSION_MAJOR}::Core
+    Qt${QT_VERSION_MAJOR}::Sql
+)
+
+target_compile_features(dataset_core PUBLIC cxx_std_17)
+
 add_library(recommendation_core STATIC
     src/recommendation/recommendationcore.h
     src/recommendation/recommendationcore.cpp
     src/recommendation/healthcalculator.h
     src/recommendation/healthcalculator.cpp
+    src/recommendation/nutritiontargetcalculator.h
+    src/recommendation/nutritiontargetcalculator.cpp
     src/recommendation/ExerciseRecommender.h
     src/recommendation/ExerciseRecommender.cpp
     src/recommendation/MealRecommender.h
@@ -70,29 +96,34 @@ set(PROJECT_SOURCES
         main.cpp
         mainwindow.cpp
         mainwindow.h
-        src/application/csvdataexchangeservice.cpp
-        src/application/csvdataexchangeservice.h
         src/application/plangenerationservice.cpp
         src/application/plangenerationservice.h
         src/interfaces/IPlanGenerationService.h
+        src/services/FeedbackService.cpp
+        src/services/FeedbackService.h
         src/session/sessionmanager.cpp
         src/session/sessionmanager.h
         src/ui/appstyle.cpp
         src/ui/appstyle.h
         src/ui/dashboardpage.cpp
         src/ui/dashboardpage.h
+        src/ui/feedbackdialog.cpp
+        src/ui/feedbackdialog.h
         src/ui/exercisepage.cpp
         src/ui/exercisepage.h
         src/ui/healthpage.cpp
         src/ui/healthpage.h
         src/ui/loginpage.cpp
         src/ui/loginpage.h
+        src/ui/macronutrientchart.cpp
+        src/ui/macronutrientchart.h
         src/ui/planpage.cpp
         src/ui/planpage.h
         src/ui/profiledialog.cpp
         src/ui/profiledialog.h
         src/ui/recipepage.cpp
         src/ui/recipepage.h
+        resources/datasets.qrc
 )
 
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
@@ -126,7 +157,37 @@ target_link_libraries(weightLossingAgent PRIVATE
     Qt${QT_VERSION_MAJOR}::Widgets
     Qt${QT_VERSION_MAJOR}::Sql
     persistence_core
+    dataset_core
     recommendation_core
+)
+
+add_executable(foodcom_preprocessor
+    tools/foodcom_preprocessor_main.cpp
+)
+
+target_link_libraries(foodcom_preprocessor PRIVATE
+    dataset_core
+    Qt${QT_VERSION_MAJOR}::Core
+)
+
+add_executable(compendium_preprocessor
+    tools/compendium_preprocessor_main.cpp
+)
+
+target_link_libraries(compendium_preprocessor PRIVATE
+    dataset_core
+    Qt${QT_VERSION_MAJOR}::Core
+)
+
+add_executable(dataset_importer
+    tools/dataset_importer_main.cpp
+)
+
+target_link_libraries(dataset_importer PRIVATE
+    dataset_core
+    persistence_core
+    Qt${QT_VERSION_MAJOR}::Core
+    Qt${QT_VERSION_MAJOR}::Sql
 )
 
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
@@ -201,18 +262,9 @@ add_recommendation_test(
     tests/weekly_planner_test.cpp
 )
 
-add_executable(health_calculator_test
+add_recommendation_test(
+    health_calculator_test
     tests/health_calculator_test.cpp
-)
-
-target_link_libraries(health_calculator_test PRIVATE
-    recommendation_core
-    Qt${QT_VERSION_MAJOR}::Core
-)
-
-add_test(
-    NAME health_calculator_test
-    COMMAND health_calculator_test
 )
 
 add_executable(sqlite_repository_test
@@ -236,6 +288,36 @@ else()
     add_test(
         NAME sqlite_repository_test
         COMMAND $<TARGET_FILE:sqlite_repository_test>
+    )
+endif()
+
+add_executable(feedback_service_test
+    tests/feedback_service_test.cpp
+    src/services/FeedbackService.cpp
+)
+
+target_include_directories(feedback_service_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+
+target_link_libraries(feedback_service_test PRIVATE
+    persistence_core
+    Qt${QT_VERSION_MAJOR}::Core
+    Qt${QT_VERSION_MAJOR}::Sql
+)
+
+if(WIN32)
+    add_test(
+        NAME feedback_service_test
+        COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt${QT_VERSION_MAJOR}::Core>;$ENV{PATH}"
+            $<TARGET_FILE:feedback_service_test>
+    )
+else()
+    add_test(
+        NAME feedback_service_test
+        COMMAND $<TARGET_FILE:feedback_service_test>
     )
 endif()
 
@@ -267,6 +349,7 @@ endif()
 add_executable(plan_generation_service_test
     tests/plan_generation_service_test.cpp
     src/application/plangenerationservice.cpp
+    src/services/FeedbackService.cpp
 )
 
 target_include_directories(plan_generation_service_test PRIVATE
@@ -297,7 +380,6 @@ endif()
 
 add_executable(csv_data_exchange_service_test
     tests/csv_data_exchange_service_test.cpp
-    src/application/csvdataexchangeservice.cpp
 )
 
 target_include_directories(csv_data_exchange_service_test PRIVATE
@@ -306,6 +388,7 @@ target_include_directories(csv_data_exchange_service_test PRIVATE
 )
 
 target_link_libraries(csv_data_exchange_service_test PRIVATE
+    dataset_core
     persistence_core
     Qt${QT_VERSION_MAJOR}::Core
     Qt${QT_VERSION_MAJOR}::Sql
@@ -324,3 +407,54 @@ else()
         COMMAND $<TARGET_FILE:csv_data_exchange_service_test>
     )
 endif()
+
+add_executable(dataset_pipeline_test
+    tests/dataset_pipeline_test.cpp
+    resources/datasets.qrc
+)
+
+target_link_libraries(dataset_pipeline_test PRIVATE
+    dataset_core
+    persistence_core
+    Qt${QT_VERSION_MAJOR}::Core
+    Qt${QT_VERSION_MAJOR}::Sql
+)
+
+if(WIN32)
+    add_test(
+        NAME dataset_pipeline_test
+        COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt${QT_VERSION_MAJOR}::Core>;$ENV{PATH}"
+            $<TARGET_FILE:dataset_pipeline_test>
+    )
+else()
+    add_test(
+        NAME dataset_pipeline_test
+        COMMAND $<TARGET_FILE:dataset_pipeline_test>
+    )
+endif()
+
+# Standalone benchmark: intentionally not registered with CTest because its
+# wall-clock results are environment dependent. It uses temporary databases.
+add_executable(performance_benchmark
+    tests/performance_benchmark.cpp
+    src/application/plangenerationservice.cpp
+    src/services/FeedbackService.cpp
+)
+
+target_include_directories(performance_benchmark PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+
+target_compile_definitions(performance_benchmark PRIVATE
+    PERFORMANCE_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+)
+
+target_link_libraries(performance_benchmark PRIVATE
+    dataset_core
+    persistence_core
+    recommendation_core
+    Qt${QT_VERSION_MAJOR}::Core
+    Qt${QT_VERSION_MAJOR}::Sql
+)

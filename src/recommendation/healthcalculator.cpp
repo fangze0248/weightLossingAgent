@@ -7,23 +7,20 @@ namespace {
 
 constexpr double caloriesPerKilogram = 7700.0;
 
-double activityFactor(int activityLevel)
+double baselineActivityFactor(int averageDailySteps)//拆分运动系数为基础运动（如日常通勤）和额外运动，并将后者融入每日的运动规划内。前者通过步数量化。在BMI中综合考虑身高，体重，年龄以及性别
 {
-    switch (activityLevel) {
-    case 1: return 1.2;
-    case 2: return 1.375;
-    case 3: return 1.55;
-    case 4: return 1.725;
-    case 5: return 1.9;
-    default: return 0.0;
-    }
+    if (averageDailySteps < 5000) return 1.20;
+    if (averageDailySteps < 7500) return 1.30;
+    if (averageDailySteps < 10000) return 1.40;
+    if (averageDailySteps < 12500) return 1.50;
+    return 1.60;
 }
 
 QString bmiEvaluation(double bmi)
 {
     if (bmi < 18.5) return QStringLiteral("Underweight");
-    if (bmi < 25.0) return QStringLiteral("Normal weight");
-    if (bmi < 30.0) return QStringLiteral("Overweight");
+    if (bmi < 24.0) return QStringLiteral("Normal weight");
+    if (bmi < 28.0) return QStringLiteral("Overweight");
     return QStringLiteral("Obesity");
 }
 
@@ -39,10 +36,10 @@ ServiceResult<CalorieNeed> HealthCalculator::calculate(
                 "Age must be at least 18, and height and weight must be positive."));
     }
 
-    if (user.activityLevel < 1 || user.activityLevel > 5) {
+    if (user.averageDailySteps < 0 || user.averageDailySteps > 50000) {
         return ServiceResult<CalorieNeed>::failure(
-            QStringLiteral("INVALID_ACTIVITY_LEVEL"),
-            QStringLiteral("Activity level must be between 1 and 5."));
+            QStringLiteral("INVALID_DAILY_STEPS"),
+            QStringLiteral("日均步数必须在 0 到 50000 之间。"));
     }
 
     if (user.dietContributionRatio < 0.0
@@ -67,7 +64,9 @@ ServiceResult<CalorieNeed> HealthCalculator::calculate(
                + 6.25 * user.heightCm
                - 5.0 * user.age
                + (user.gender == Gender::Male ? 5.0 : -161.0);
-    need.tdee = need.bmr * activityFactor(user.activityLevel);
+    // This factor represents ordinary daily movement inferred from steps.
+    // Exercise prescribed by the planner is deliberately not added here.
+    need.tdee = need.bmr * baselineActivityFactor(user.averageDailySteps);
 
     const double dailyEnergyChange =
         user.weeklyGoalKg * caloriesPerKilogram / 7.0;
@@ -97,7 +96,9 @@ ServiceResult<CalorieNeed> HealthCalculator::calculate(
 
     QStringList warnings{
         QStringLiteral(
-            "Calculated values are educational estimates, not medical advice.")
+            "结果仅为健康管理估算，不替代医生或营养师建议。"),
+        QStringLiteral(
+            "基础生活消耗由过去 7 天日均步数估算，推荐锻炼未重复计入。")
     };
     if (user.age > 78) {
         warnings.append(QStringLiteral(
@@ -106,6 +107,22 @@ ServiceResult<CalorieNeed> HealthCalculator::calculate(
     if (need.recommendedIntake < need.bmr) {
         warnings.append(QStringLiteral(
             "The estimated intake is below BMR and should be reviewed."));
+    }
+    if (user.goalType == GoalType::Lose && need.bmi < 18.5) {
+        warnings.append(QStringLiteral(
+            "BMI is below 18.5; an automatic weight-loss plan is not recommended."));
+    } else if (user.goalType == GoalType::Lose && need.bmi < 24.0) {
+        warnings.append(QStringLiteral(
+            "BMI is in the normal range; review whether further weight loss is appropriate."));
+    }
+
+    if (user.goalType == GoalType::Lose && user.targetWeightKg > 0.0) {
+        const double targetBmi =
+            user.targetWeightKg / (heightMeters * heightMeters);
+        if (targetBmi < 18.5) {
+            warnings.append(QStringLiteral(
+                "The target weight would result in a BMI below 18.5."));
+        }
     }
 
     return ServiceResult<CalorieNeed>::success(need, {}, warnings);

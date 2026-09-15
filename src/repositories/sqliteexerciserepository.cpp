@@ -55,6 +55,12 @@ SqliteExerciseRepository::SqliteExerciseRepository(QSqlDatabase database)
 ServiceResult<QVector<Exercise>> SqliteExerciseRepository::findAll(
     const ExerciseFilter& filter) const
 {
+    if (filter.limit < 0) {
+        return ServiceResult<QVector<Exercise>>::failure(
+            QStringLiteral("INVALID_EXERCISE_FILTER"),
+            QStringLiteral("查询数量限制不能为负数。"));
+    }
+
     QString sql = QStringLiteral(
         "SELECT id, name, met_value, category, description "
         "FROM exercises WHERE 1 = 1");
@@ -72,7 +78,30 @@ ServiceResult<QVector<Exercise>> SqliteExerciseRepository::findAll(
     if (filter.maximumMet.has_value()) {
         sql += QStringLiteral(" AND met_value <= :maximum_met");
     }
-    sql += QStringLiteral(" ORDER BY name");
+
+    QStringList excludedIds;
+    for (const QString& id : filter.excludedIds) {
+        const QString normalized = id.trimmed();
+        if (!normalized.isEmpty() && !excludedIds.contains(normalized)) {
+            excludedIds.append(normalized);
+        }
+    }
+    if (!excludedIds.isEmpty()) {
+        QStringList placeholders;
+        for (qsizetype index = 0; index < excludedIds.size(); ++index) {
+            placeholders.append(QStringLiteral(":excluded_%1").arg(index));
+        }
+        sql += QStringLiteral(" AND id NOT IN (%1)")
+            .arg(placeholders.join(QLatin1Char(',')));
+    }
+
+    if (filter.targetMet.has_value()) {
+        sql += QStringLiteral(
+            " ORDER BY ABS(met_value - :target_met), name");
+    } else {
+        sql += QStringLiteral(" ORDER BY category, met_value, name");
+    }
+    if (filter.limit > 0) sql += QStringLiteral(" LIMIT :limit");
 
     QSqlQuery query(database_);
     query.prepare(sql);
@@ -90,6 +119,17 @@ ServiceResult<QVector<Exercise>> SqliteExerciseRepository::findAll(
     }
     if (filter.maximumMet.has_value()) {
         query.bindValue(QStringLiteral(":maximum_met"), *filter.maximumMet);
+    }
+    for (qsizetype index = 0; index < excludedIds.size(); ++index) {
+        query.bindValue(
+            QStringLiteral(":excluded_%1").arg(index),
+            excludedIds.at(index));
+    }
+    if (filter.targetMet.has_value()) {
+        query.bindValue(QStringLiteral(":target_met"), *filter.targetMet);
+    }
+    if (filter.limit > 0) {
+        query.bindValue(QStringLiteral(":limit"), filter.limit);
     }
 
     if (!query.exec()) {

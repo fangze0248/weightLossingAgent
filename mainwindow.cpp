@@ -7,6 +7,7 @@
 #include "interfaces/IUserRepository.h"
 #include "interfaces/IPlanGenerationService.h"
 #include "interfaces/IDataExchangeService.h"
+#include "interfaces/IFeedbackService.h"
 #include "session/sessionmanager.h"
 
 #include <QFrame>
@@ -26,6 +27,7 @@ MainWindow::MainWindow(IExerciseRepository& exerciseRepository,
                        IDataExchangeService& dataExchangeService,
                        IUserRepository& userRepository,
                        IHealthCalculator& healthCalculator,
+                       IFeedbackService& feedbackService,
                        SessionManager& sessionManager,
                        QWidget *parent)
     : QMainWindow(parent)
@@ -76,6 +78,7 @@ MainWindow::MainWindow(IExerciseRepository& exerciseRepository,
     auto* dashboardPage = new DashboardPage(userRepository,
                                             planRepository,
                                             healthCalculator,
+                                            feedbackService,
                                             sessionManager,
                                             tabs);
     auto* exercisePage = new ExercisePage(dataExchangeService, tabs);

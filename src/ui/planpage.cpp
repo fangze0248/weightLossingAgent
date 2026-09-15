@@ -13,6 +13,7 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QRandomGenerator>
 #include <QStringList>
 #include <QTableWidget>
 #include <QTableWidgetItem>
@@ -90,7 +91,7 @@ PlanPage::PlanPage(IPlanRepository& repository,
     summaryLabel_->setWordWrap(true);
     summaryLabel_->setProperty("role", "resultCard");
 
-    planTable_ = new QTableWidget(0, 8, this);
+    planTable_ = new QTableWidget(0, 9, this);
     planTable_->setHorizontalHeaderLabels({
         QStringLiteral("日期"),
         QStringLiteral("建议摄入"),
@@ -99,6 +100,7 @@ PlanPage::PlanPage(IPlanRepository& repository,
         QStringLiteral("早餐"),
         QStringLiteral("午餐"),
         QStringLiteral("晚餐"),
+        QStringLiteral("加餐"),
         QStringLiteral("饮食总热量")
     });
     planTable_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
@@ -142,8 +144,12 @@ void PlanPage::generateWeeklyPlan()
 
     generateButton_->setEnabled(false);
     generateButton_->setText(QStringLiteral("正在生成…"));
+    WeeklyPlanOptions options;
+    // 每次点击生成新的周种子，让候选充分时的菜单有所变化。
+    // 调试或测试仍可由调用方传入固定种子复现完整结果。
+    options.randomSeed = QRandomGenerator::global()->generate();
     const auto result = generationService_.generateAndSave(
-        userId, startDateEdit_->date());
+        userId, startDateEdit_->date(), options);
     generateButton_->setEnabled(true);
     generateButton_->setText(QStringLiteral("生成并保存周计划"));
 
@@ -231,6 +237,9 @@ void PlanPage::displayPlan(const WeeklyPlan& plan)
             row, 6, new QTableWidgetItem(mealSummary(day.meals.dinner)));
         planTable_->setItem(
             row, 7, new QTableWidgetItem(
+                        mealSummary(day.meals.snacks)));
+        planTable_->setItem(
+            row, 8, new QTableWidgetItem(
                         QString::number(day.meals.totalCalories, 'f', 0)));
     }
 }

@@ -2,6 +2,7 @@
 
 #include "interfaces/IUserRepository.h"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
@@ -47,6 +48,19 @@ ProfileDialog::ProfileDialog(IUserRepository& repository,
     genderCombo_->addItem(QStringLiteral("男"), static_cast<int>(Gender::Male));
     genderCombo_->addItem(QStringLiteral("女"), static_cast<int>(Gender::Female));
 
+    exerciseGoalCombo_ = new QComboBox(this);
+    exerciseGoalCombo_->addItem(
+        QStringLiteral("轻盈健康"), static_cast<int>(ExerciseGoal::LightHealth));
+    exerciseGoalCombo_->addItem(
+        QStringLiteral("强身健体"), static_cast<int>(ExerciseGoal::BuildFitness));
+    exerciseGoalCombo_->addItem(
+        QStringLiteral("增肌塑形"), static_cast<int>(ExerciseGoal::MuscleGain));
+
+    includeSnackCheckBox_ = new QCheckBox(
+        QStringLiteral("食谱计划中包含加餐"), this);
+    includeSnackCheckBox_->setToolTip(QStringLiteral(
+        "勾选后，加餐约占每日建议摄入热量的 10%，每日总热量保持不变。"));
+
     ageSpin_ = new QSpinBox(this);
     ageSpin_->setRange(18, 100);
     ageSpin_->setValue(25);
@@ -70,13 +84,13 @@ ProfileDialog::ProfileDialog(IUserRepository& repository,
     targetWeightSpin_->setDecimals(1);
     targetWeightSpin_->setSuffix(QStringLiteral(" kg"));
 
-    activityCombo_ = new QComboBox(this);
-    activityCombo_->addItem(QStringLiteral("1 - 久坐"), 1);
-    activityCombo_->addItem(QStringLiteral("2 - 轻度活动"), 2);
-    activityCombo_->addItem(QStringLiteral("3 - 中度活动"), 3);
-    activityCombo_->addItem(QStringLiteral("4 - 高度活动"), 4);
-    activityCombo_->addItem(QStringLiteral("5 - 非常活跃"), 5);
-    activityCombo_->setCurrentIndex(2);
+    averageDailyStepsSpin_ = new QSpinBox(this);
+    averageDailyStepsSpin_->setRange(0, 50000);
+    averageDailyStepsSpin_->setSingleStep(500);
+    averageDailyStepsSpin_->setValue(4000);
+    averageDailyStepsSpin_->setSuffix(QStringLiteral(" 步/天"));
+    averageDailyStepsSpin_->setToolTip(QStringLiteral(
+        "请输入过去 7 天的日均步数；健身等专项锻炼由运动处方另外安排。"));
 
     weeklyGoalSpin_ = new QDoubleSpinBox(this);
     weeklyGoalSpin_->setRange(0.1, 1.5);
@@ -102,8 +116,11 @@ ProfileDialog::ProfileDialog(IUserRepository& repository,
     formLayout->addRow(QStringLiteral("身高："), heightSpin_);
     formLayout->addRow(QStringLiteral("当前体重："), weightSpin_);
     formLayout->addRow(QStringLiteral("目标体重："), targetWeightSpin_);
-    formLayout->addRow(QStringLiteral("活动等级："), activityCombo_);
+    formLayout->addRow(QStringLiteral("过去7天日均步数："),
+                       averageDailyStepsSpin_);
     formLayout->addRow(QStringLiteral("每周减重目标："), weeklyGoalSpin_);
+    formLayout->addRow(QStringLiteral("运动目标："), exerciseGoalCombo_);
+    formLayout->addRow(QStringLiteral("饮食安排："), includeSnackCheckBox_);
     formLayout->addRow(QStringLiteral("饮食贡献比例："), dietRatioSpin_);
 
     saveButton_ = new QPushButton(
@@ -133,16 +150,24 @@ ProfileDialog::ProfileDialog(IUserRepository& repository,
 
 void ProfileDialog::setUser(const UserProfile& user)
 {
+    // Keep preferences that this dialog does not edit, such as feedback-based
+    // dislikes, when an existing profile is saved.
+    savedUser_ = user;
     idEdit_->setText(user.id);
     nameEdit_->setText(user.name);
     const int genderIndex = genderCombo_->findData(static_cast<int>(user.gender));
     if (genderIndex >= 0) genderCombo_->setCurrentIndex(genderIndex);
+    const int exerciseGoalIndex =
+        exerciseGoalCombo_->findData(static_cast<int>(user.exerciseGoal));
+    if (exerciseGoalIndex >= 0) {
+        exerciseGoalCombo_->setCurrentIndex(exerciseGoalIndex);
+    }
+    includeSnackCheckBox_->setChecked(user.includeSnack);
     ageSpin_->setValue(user.age);
     heightSpin_->setValue(user.heightCm);
     weightSpin_->setValue(user.weightKg);
     targetWeightSpin_->setValue(user.targetWeightKg);
-    const int activityIndex = activityCombo_->findData(user.activityLevel);
-    if (activityIndex >= 0) activityCombo_->setCurrentIndex(activityIndex);
+    averageDailyStepsSpin_->setValue(user.averageDailySteps);
     weeklyGoalSpin_->setValue(user.weeklyGoalKg);
     dietRatioSpin_->setValue(qRound(user.dietContributionRatio * 100.0));
 }
@@ -154,15 +179,18 @@ UserProfile ProfileDialog::savedUser() const
 
 UserProfile ProfileDialog::buildUser() const
 {
-    UserProfile user;
+    UserProfile user = mode_ == Mode::Edit ? savedUser_ : UserProfile{};
     user.id = idEdit_->text().trimmed();
     user.name = nameEdit_->text().trimmed();
     user.gender = static_cast<Gender>(genderCombo_->currentData().toInt());
+    user.exerciseGoal =
+        static_cast<ExerciseGoal>(exerciseGoalCombo_->currentData().toInt());
+    user.includeSnack = includeSnackCheckBox_->isChecked();
     user.age = ageSpin_->value();
     user.heightCm = heightSpin_->value();
     user.weightKg = weightSpin_->value();
     user.targetWeightKg = targetWeightSpin_->value();
-    user.activityLevel = activityCombo_->currentData().toInt();
+    user.averageDailySteps = averageDailyStepsSpin_->value();
     user.goalType = GoalType::Lose;
     user.weeklyGoalKg = weeklyGoalSpin_->value();
     user.dietContributionRatio = dietRatioSpin_->value() / 100.0;

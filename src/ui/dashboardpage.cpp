@@ -1,9 +1,12 @@
 #include "ui/dashboardpage.h"
 
 #include "interfaces/IHealthCalculator.h"
+#include "interfaces/IFeedbackService.h"
 #include "interfaces/IPlanRepository.h"
 #include "interfaces/IUserRepository.h"
 #include "session/sessionmanager.h"
+#include "ui/feedbackdialog.h"
+#include "ui/macronutrientchart.h"
 #include "ui/profiledialog.h"
 
 #include <QAbstractItemView>
@@ -76,12 +79,14 @@ QTableWidgetItem* readonlyItem(const QString& text)
 DashboardPage::DashboardPage(IUserRepository& userRepository,
                              IPlanRepository& planRepository,
                              IHealthCalculator& healthCalculator,
+                             IFeedbackService& feedbackService,
                              SessionManager& sessionManager,
                              QWidget* parent)
     : QWidget(parent),
       userRepository_(userRepository),
       planRepository_(planRepository),
       healthCalculator_(healthCalculator),
+      feedbackService_(feedbackService),
       sessionManager_(sessionManager)
 {
     setProperty("page", true);
@@ -161,6 +166,7 @@ DashboardPage::DashboardPage(IUserRepository& userRepository,
     recommendationSummaryLabel_ = new QLabel(recommendationCard);
     recommendationSummaryLabel_->setWordWrap(true);
     recommendationSummaryLabel_->setProperty("role", "summaryBlock");
+    macronutrientChart_ = new MacronutrientChart(recommendationCard);
 
     auto* recommendationLayout = new QVBoxLayout(recommendationCard);
     recommendationLayout->setContentsMargins(20, 18, 20, 18);
@@ -170,6 +176,7 @@ DashboardPage::DashboardPage(IUserRepository& userRepository,
     recommendationLayout->addWidget(exerciseRecommendationLabel_);
     recommendationLayout->addWidget(mealRecommendationLabel_);
     recommendationLayout->addWidget(recommendationSummaryLabel_);
+    recommendationLayout->addWidget(macronutrientChart_);
     recommendationLayout->addStretch();
 
     auto* planCard = new QFrame(this);
@@ -308,8 +315,30 @@ void DashboardPage::checkInSelectedDay()
     }
 
     currentPlan_ = saveResult.data;
+    const DailyPlan& day = currentPlan_->days.at(row);
     updatePlanPanel();
     checkInTable_->selectRow(row);
+
+    // 打卡成功后弹出享受度反馈板块，未体验的项不会写入数据库。
+    FeedbackDialog dialog(sessionManager_.currentUserId(),
+                          currentPlan_->planId,
+                          day,
+                          this);
+    if (dialog.exec() == QDialog::Accepted) {
+        const QVector<Feedback> items = dialog.collectedFeedback();
+        int savedCount = 0;
+        for (const Feedback& feedback : items) {
+            if (feedbackService_.record(feedback).ok) {
+                ++savedCount;
+            }
+        }
+        if (savedCount < items.size()) {
+            QMessageBox::warning(this,
+                                 QStringLiteral("反馈保存部分失败"),
+                                 QStringLiteral("部分反馈未能保存，可稍后重试。"));
+        }
+    }
+
     QMessageBox::information(this,
                              QStringLiteral("打卡成功"),
                              QStringLiteral("当天计划已标记为完成"));
@@ -321,6 +350,7 @@ void DashboardPage::displaySelectedDay(int row)
         || row < 0
         || row >= currentPlan_->days.size()) {
         checkInButton_->setEnabled(false);
+        macronutrientChart_->clearNutrition();
         return;
     }
 
@@ -337,6 +367,7 @@ void DashboardPage::displaySelectedDay(int row)
             .arg(day.calorieNeed.recommendedIntake, 0, 'f', 0)
             .arg(day.meals.totalCalories, 0, 'f', 0)
             .arg(day.totalCaloriesBurned, 0, 'f', 0));
+    macronutrientChart_->setNutrition(day.meals.totalNutrition);
     checkInButton_->setEnabled(!day.completed);
     checkInButton_->setText(day.completed
                                 ? QStringLiteral("该日期已完成打卡")
@@ -359,6 +390,7 @@ void DashboardPage::clearDashboard(const QString& message)
         QStringLiteral("登录后显示运动推荐"));
     mealRecommendationLabel_->setText(QStringLiteral("登录后显示食谱推荐"));
     recommendationSummaryLabel_->clear();
+    macronutrientChart_->clearNutrition();
 }
 
 void DashboardPage::updateProfilePanel(const UserProfile& user,
@@ -368,19 +400,20 @@ void DashboardPage::updateProfilePanel(const UserProfile& user,
     avatarLabel_->setText(displayName.left(1));
     nameLabel_->setText(displayName);
     basicInfoLabel_->setText(
-        QStringLiteral("%1 · %2 岁 · %3 cm\n当前体重 %4 kg")
+        QStringLiteral("%1 · %2 岁 · %3 cm\n当前体重 %4 kg · 日均 %5 步")
             .arg(user.gender == Gender::Male
                      ? QStringLiteral("男")
                      : QStringLiteral("女"))
             .arg(user.age)
             .arg(user.heightCm, 0, 'f', 1)
-            .arg(user.weightKg, 0, 'f', 1));
+            .arg(user.weightKg, 0, 'f', 1)
+            .arg(user.averageDailySteps));
     bmiValueLabel_->setText(
         QStringLiteral("%1  %2")
             .arg(calorieNeed.bmi, 0, 'f', 1)
             .arg(calorieNeed.bmiEvaluation));
     metabolismLabel_->setText(
-        QStringLiteral("🔥 能量代谢\n基础代谢　%1 kcal\n每日总消耗　%2 kcal")
+        QStringLiteral("🔥 能量代谢\n基础代谢　%1 kcal\n基础生活总消耗　%2 kcal")
             .arg(calorieNeed.bmr, 0, 'f', 0)
             .arg(calorieNeed.tdee, 0, 'f', 0));
     goalLabel_->setText(
@@ -403,6 +436,7 @@ void DashboardPage::updatePlanPanel()
             QStringLiteral("等待推荐模块生成并保存 WeeklyPlan 后，这里会显示食谱推荐。"));
         recommendationSummaryLabel_->setText(
             QStringLiteral("当前展示的是空状态，不是虚构的算法结果。"));
+        macronutrientChart_->clearNutrition();
         checkInButton_->setEnabled(false);
         return;
     }

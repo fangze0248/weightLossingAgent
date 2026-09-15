@@ -3,6 +3,7 @@
 #include "interfaces/IPlanGenerationService.h"
 
 class IExerciseRepository;
+class IFeedbackService;
 class IHealthCalculator;
 class IPlanRepository;
 class IRecipeRepository;
@@ -17,7 +18,8 @@ public:
                           IRecipeRepository& recipeRepository,
                           IPlanRepository& planRepository,
                           IHealthCalculator& healthCalculator,
-                          IWeeklyPlanner& weeklyPlanner);
+                          IWeeklyPlanner& weeklyPlanner,
+                          IFeedbackService& feedbackService);
 
     ServiceResult<WeeklyPlan> generateAndSave(
         const QString& userId,
@@ -31,5 +33,6 @@ private:
     IPlanRepository& planRepository_;
     IHealthCalculator& healthCalculator_;
     IWeeklyPlanner& weeklyPlanner_;
+    IFeedbackService& feedbackService_;
 };
 

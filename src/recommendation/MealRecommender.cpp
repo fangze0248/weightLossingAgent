@@ -1,9 +1,12 @@
 #include "recommendation/MealRecommender.h"
 
+#include <QMap>
+#include <QRandomGenerator>
 #include <QSet>
 
+#include <algorithm>
 #include <cmath>
-#include <functional>
+#include <limits>
 #include <optional>
 #include <utility>
 
@@ -12,6 +15,18 @@ namespace {
 constexpr double kMaximumAllowedToleranceRatio = 0.10;
 constexpr double kComparisonEpsilon = 1e-9;
 constexpr int kMaximumSupportedItemsPerMeal = 2;
+constexpr int kRandomSingleRecipePoolSize = 3;
+constexpr int kRandomPlanPoolSize = 5;
+constexpr int kMaximumChoicesPerMeal = 240;
+constexpr int kMaximumChoicesPerCalorieBucket = 24;
+constexpr int kMealPlanBeamWidth = 240;
+constexpr double kMealChoiceCalorieBucketSize = 50.0;
+constexpr double kRecentExposurePenaltyRatio = 0.08;
+// 质量差距很小时视为同一层，再让反馈真正参与选择；超过该范围时
+// 仍严格保持“热量第一、三大营养素第二”。
+constexpr double kEquivalentMealCalorieDifference = 10.0;
+constexpr double kEquivalentPlanRatioDifference = 20.0;
+constexpr double kEquivalentMacroDifference = 0.03;
 
 bool isFinitePositive(double value)
 {
@@ -21,6 +36,170 @@ bool isFinitePositive(double value)
 bool isFiniteNonNegative(double value)
 {
     return std::isfinite(value) && value >= 0.0;
+}
+
+qint64 scoreTier(double value, double tierWidth)
+{
+    return static_cast<qint64>(std::floor(
+        (value + kComparisonEpsilon) / tierWidth));
+}
+
+bool isValidPreference(const RecommendationPreference& preference)
+{
+    for (auto it = preference.itemWeights.cbegin();
+         it != preference.itemWeights.cend();
+         ++it) {
+        if (it.key().trimmed().isEmpty()
+            || !isFiniteNonNegative(it.value())) {
+            return false;
+        }
+    }
+    for (auto it = preference.keywordWeights.cbegin();
+         it != preference.keywordWeights.cend();
+         ++it) {
+        if (it.key().trimmed().isEmpty() || !std::isfinite(it.value())) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool isValidRecentRecipePenalties(
+    const QHash<QString, double>& penalties)
+{
+    for (auto it = penalties.cbegin(); it != penalties.cend(); ++it) {
+        if (it.key().trimmed().isEmpty()
+            || !isFiniteNonNegative(it.value())) {
+            return false;
+        }
+    }
+    return true;
+}
+
+QString normalizedKeyword(const QString& value)
+{
+    return value.trimmed().toLower();
+}
+
+QHash<QString, double> buildRecipePreferenceScores(
+    const QVector<Recipe>& recipes,
+    const RecommendationPreference& preference)
+{
+    QHash<QString, double> scores;
+    if (!preference.hasSignals()) {
+        return scores;
+    }
+
+    QHash<QString, int> documentFrequencies;
+    for (const Recipe& recipe : recipes) {
+        QSet<QString> uniqueTags;
+        for (const QString& tag : recipe.nutritionTags) {
+            const QString normalized = normalizedKeyword(tag);
+            if (!normalized.isEmpty()) {
+                uniqueTags.insert(normalized);
+            }
+        }
+        for (const QString& tag : uniqueTags) {
+            documentFrequencies[tag] += 1;
+        }
+    }
+
+    const double documentCount = static_cast<double>(recipes.size());
+    QHash<QString, double> inverseDocumentFrequencies;
+    for (auto it = documentFrequencies.cbegin();
+         it != documentFrequencies.cend();
+         ++it) {
+        inverseDocumentFrequencies.insert(
+            it.key(),
+            std::log((documentCount + 1.0)
+                     / (static_cast<double>(it.value()) + 1.0))
+                + 1.0);
+    }
+
+    QHash<QString, double> userVector;
+    double userNormSquared = 0.0;
+    for (auto it = preference.keywordWeights.cbegin();
+         it != preference.keywordWeights.cend();
+         ++it) {
+        const QString keyword = normalizedKeyword(it.key());
+        if (!inverseDocumentFrequencies.contains(keyword)) {
+            continue;
+        }
+        const double value = it.value()
+            * inverseDocumentFrequencies.value(keyword);
+        userVector.insert(keyword, value);
+        userNormSquared += value * value;
+    }
+
+    for (const Recipe& recipe : recipes) {
+        const double itemScore =
+            preference.itemWeights.value(recipe.id, 1.0) - 1.0;
+        QSet<QString> uniqueTags;
+        for (const QString& tag : recipe.nutritionTags) {
+            const QString normalized = normalizedKeyword(tag);
+            if (!normalized.isEmpty()) {
+                uniqueTags.insert(normalized);
+            }
+        }
+
+        double tagSimilarity = 0.0;
+        if (!uniqueTags.isEmpty() && userNormSquared > kComparisonEpsilon) {
+            const double termFrequency = 1.0 / uniqueTags.size();
+            double dotProduct = 0.0;
+            double recipeNormSquared = 0.0;
+            for (const QString& tag : uniqueTags) {
+                const double recipeValue = termFrequency
+                    * inverseDocumentFrequencies.value(tag, 0.0);
+                recipeNormSquared += recipeValue * recipeValue;
+                dotProduct += recipeValue * userVector.value(tag, 0.0);
+            }
+            if (recipeNormSquared > kComparisonEpsilon) {
+                tagSimilarity = dotProduct
+                    / (std::sqrt(recipeNormSquared)
+                       * std::sqrt(userNormSquared));
+            }
+        }
+
+        // 单项目星级每颗星造成 0.2 的真实分差；标签相似度作为较温和的
+        // 辅助信号，避免压过明确的项目反馈。
+        scores.insert(recipe.id, itemScore + 0.4 * tagSimilarity);
+    }
+    return scores;
+}
+
+double normalizedNutritionValue(double value)
+{
+    return isFiniteNonNegative(value) ? value : 0.0;
+}
+
+NutritionFacts normalizedNutrition(const Recipe& recipe)
+{
+    NutritionFacts nutrition = recipe.nutritionPerServing;
+    // The legacy calorie field remains authoritative until all imported data
+    // consistently provides the detailed nutrition object.
+    nutrition.caloriesKcal = recipe.totalCalories;
+    nutrition.proteinG = normalizedNutritionValue(nutrition.proteinG);
+    nutrition.carbohydrateG = normalizedNutritionValue(nutrition.carbohydrateG);
+    nutrition.fatG = normalizedNutritionValue(nutrition.fatG);
+    nutrition.saturatedFatG = normalizedNutritionValue(nutrition.saturatedFatG);
+    nutrition.fiberG = normalizedNutritionValue(nutrition.fiberG);
+    nutrition.sugarG = normalizedNutritionValue(nutrition.sugarG);
+    nutrition.sodiumMg = normalizedNutritionValue(nutrition.sodiumMg);
+    nutrition.cholesterolMg = normalizedNutritionValue(nutrition.cholesterolMg);
+    return nutrition;
+}
+
+void addNutrition(NutritionFacts& total, const NutritionFacts& value)
+{
+    total.caloriesKcal += value.caloriesKcal;
+    total.proteinG += value.proteinG;
+    total.carbohydrateG += value.carbohydrateG;
+    total.fatG += value.fatG;
+    total.saturatedFatG += value.saturatedFatG;
+    total.fiberG += value.fiberG;
+    total.sugarG += value.sugarG;
+    total.sodiumMg += value.sodiumMg;
+    total.cholesterolMg += value.cholesterolMg;
 }
 
 QVector<Recipe> filterEligibleRecipes(
@@ -35,7 +214,7 @@ QVector<Recipe> filterEligibleRecipes(
     for (const QString& id : options.excludedRecipeIds) {
         excludedIds.insert(id.trimmed());
     }
-
+//只能够exclude吗？
     QVector<Recipe> eligibleRecipes;
     eligibleRecipes.reserve(recipeDatabase.size());
     QSet<QString> acceptedIds;
@@ -135,13 +314,47 @@ MealPlanItem makeMealPlanItem(const Recipe& recipe)
     item.ingredients = recipe.ingredients;
     item.nutritionTags = recipe.nutritionTags;
     item.calories = recipe.totalCalories;
+    item.nutrition = normalizedNutrition(recipe);
     return item;
 }
 
 std::optional<MealPlanItem> selectClosestSingleRecipe(
     const QVector<Recipe>& candidates,
-    double mealTargetCalories)
+    double mealTargetCalories,
+    QRandomGenerator* randomGenerator)
 {
+    if (randomGenerator != nullptr) {
+        QVector<const Recipe*> rankedCandidates;
+        rankedCandidates.reserve(candidates.size());
+        for (const Recipe& recipe : candidates) {
+            rankedCandidates.append(&recipe);
+        }
+
+        // 先按原有质量规则排序，再只在最接近目标的少量候选中随机选择，
+        // 既增加菜单变化，也避免随机到明显偏离餐次目标的食谱。
+        std::stable_sort(
+            rankedCandidates.begin(),
+            rankedCandidates.end(),
+            [mealTargetCalories](const Recipe* left, const Recipe* right) {
+                const double leftDifference =
+                    std::abs(left->totalCalories - mealTargetCalories);
+                const double rightDifference =
+                    std::abs(right->totalCalories - mealTargetCalories);
+                if (std::abs(leftDifference - rightDifference)
+                    > kComparisonEpsilon) {
+                    return leftDifference < rightDifference;
+                }
+                return left->totalCalories
+                    < right->totalCalories - kComparisonEpsilon;
+            });
+
+        const int poolSize = std::min(
+            kRandomSingleRecipePoolSize,
+            static_cast<int>(rankedCandidates.size()));
+        const int selectedIndex = randomGenerator->bounded(poolSize);
+        return makeMealPlanItem(*rankedCandidates.at(selectedIndex));
+    }
+
     std::optional<MealPlanItem> bestItem;
     double bestDifference = 0.0;
 
@@ -170,7 +383,8 @@ void appendSingleMealIfEnabled(
     QVector<MealPlanItem>& destination,
     const QVector<Recipe>& candidates,
     double mealRatio,
-    double dailyTargetCalories)
+    double dailyTargetCalories,
+    QRandomGenerator* randomGenerator)
 {
     if (mealRatio <= kComparisonEpsilon) {
         return;
@@ -179,7 +393,8 @@ void appendSingleMealIfEnabled(
     const std::optional<MealPlanItem> selected =
         selectClosestSingleRecipe(
             candidates,
-            dailyTargetCalories * mealRatio);
+            dailyTargetCalories * mealRatio,
+            randomGenerator);
     if (selected.has_value()) {
         destination.append(*selected);
     }
@@ -187,37 +402,184 @@ void appendSingleMealIfEnabled(
 
 struct MealChoice {
     MealType mealType = MealType::Breakfast;
-    QVector<MealPlanItem> items;
+    const Recipe* firstRecipe = nullptr;
+    const Recipe* secondRecipe = nullptr;
+    int itemCount = 0;
     double calories = 0.0;
+    NutritionFacts nutrition;
+    double targetRatio = 0.0;
+    double ratioDifference = 0.0;
+    double diversityAdjustedRatioDifference = 0.0;
+    double macroDifference = 0.0;
+    double preferenceScore = 0.0;
+    double recentExposurePenalty = 0.0;
 };
+
+double macroDifference(
+    const NutritionFacts& actual,
+    const NutritionFacts& target);
+
+NutritionFacts scaledNutritionTarget(
+    const NutritionFacts& target,
+    double ratio)
+{
+    NutritionFacts scaled;
+    scaled.caloriesKcal = target.caloriesKcal * ratio;
+    scaled.proteinG = target.proteinG * ratio;
+    scaled.carbohydrateG = target.carbohydrateG * ratio;
+    scaled.fatG = target.fatG * ratio;
+    return scaled;
+}
+
+bool isBetterMealChoice(
+    const MealChoice& candidate,
+    const MealChoice& current)
+{
+    const qint64 candidateCalorieTier = scoreTier(
+        candidate.diversityAdjustedRatioDifference,
+        kEquivalentMealCalorieDifference);
+    const qint64 currentCalorieTier = scoreTier(
+        current.diversityAdjustedRatioDifference,
+        kEquivalentMealCalorieDifference);
+    if (candidateCalorieTier != currentCalorieTier) {
+        return candidateCalorieTier < currentCalorieTier;
+    }
+    const qint64 candidateMacroTier = scoreTier(
+        candidate.macroDifference,
+        kEquivalentMacroDifference);
+    const qint64 currentMacroTier = scoreTier(
+        current.macroDifference,
+        kEquivalentMacroDifference);
+    if (candidateMacroTier != currentMacroTier) {
+        return candidateMacroTier < currentMacroTier;
+    }
+    if (std::abs(candidate.preferenceScore - current.preferenceScore)
+        > kComparisonEpsilon) {
+        return candidate.preferenceScore > current.preferenceScore;
+    }
+    if (std::abs(candidate.diversityAdjustedRatioDifference
+                 - current.diversityAdjustedRatioDifference)
+        > kComparisonEpsilon) {
+        return candidate.diversityAdjustedRatioDifference
+            < current.diversityAdjustedRatioDifference;
+    }
+    if (std::abs(candidate.macroDifference - current.macroDifference)
+        > kComparisonEpsilon) {
+        return candidate.macroDifference < current.macroDifference;
+    }
+    if (candidate.itemCount != current.itemCount) {
+        return candidate.itemCount < current.itemCount;
+    }
+    return candidate.calories
+        < current.calories - kComparisonEpsilon;
+}
 
 QVector<MealChoice> buildMealChoices(
     const QVector<Recipe>& candidates,
     MealType mealType,
-    int maximumItemsPerMeal)
+    int maximumItemsPerMeal,
+    double targetCalories,
+    double mealRatio,
+    double maximumDailyCalories,
+    const std::optional<NutritionFacts>& nutritionTarget,
+    const QHash<QString, double>& recipePreferenceScores,
+    const QHash<QString, double>& recentRecipePenalties)
 {
-    QVector<MealChoice> choices;
+    // 先按热量区间保留每个餐次的代表性优质候选，避免某一个热量点
+    // 占满候选池，同时把后续跨餐次搜索控制在固定规模内。
+    QMap<int, QVector<MealChoice>> choicesByCalorieBucket;
+    const double mealTargetCalories = targetCalories * mealRatio;
+    const std::optional<NutritionFacts> mealNutritionTarget =
+        nutritionTarget.has_value()
+        ? std::optional<NutritionFacts>(
+              scaledNutritionTarget(*nutritionTarget, mealRatio))
+        : std::nullopt;
+
+    const auto appendChoice = [&](const Recipe& first,
+                                  const Recipe* second) {
+        MealChoice choice;
+        choice.mealType = mealType;
+        choice.firstRecipe = &first;
+        choice.secondRecipe = second;
+        choice.itemCount = second == nullptr ? 1 : 2;
+        choice.targetRatio = mealRatio;
+        choice.calories = first.totalCalories
+            + (second == nullptr ? 0.0 : second->totalCalories);
+        if (choice.calories
+            > maximumDailyCalories + kComparisonEpsilon) {
+            return;
+        }
+
+        choice.nutrition = normalizedNutrition(first);
+        if (second != nullptr) {
+            addNutrition(choice.nutrition, normalizedNutrition(*second));
+        }
+        choice.ratioDifference = std::abs(
+            choice.calories - mealTargetCalories);
+        choice.macroDifference = mealNutritionTarget.has_value()
+            ? macroDifference(choice.nutrition, *mealNutritionTarget)
+            : 0.0;
+        const double firstPreference = recipePreferenceScores.value(
+            first.id,
+            0.0);
+        const double secondPreference = second == nullptr
+            ? 0.0
+            : recipePreferenceScores.value(second->id, 0.0);
+        choice.preferenceScore =
+            (firstPreference + secondPreference) / choice.itemCount;
+        const double firstExposure = recentRecipePenalties.value(
+            first.id,
+            0.0);
+        const double secondExposure = second == nullptr
+            ? 0.0
+            : recentRecipePenalties.value(second->id, 0.0);
+        choice.recentExposurePenalty =
+            (firstExposure + secondExposure) / choice.itemCount;
+        choice.diversityAdjustedRatioDifference =
+            choice.ratioDifference
+            + mealTargetCalories
+                * kRecentExposurePenaltyRatio
+                * choice.recentExposurePenalty;
+
+        const int bucket = static_cast<int>(std::floor(
+            choice.calories / kMealChoiceCalorieBucketSize));
+        choicesByCalorieBucket[bucket].append(std::move(choice));
+    };
 
     for (const Recipe& recipe : candidates) {
-        const MealPlanItem item = makeMealPlanItem(recipe);
-        choices.append({mealType, {item}, item.calories});
+        appendChoice(recipe, nullptr);
     }
 
     if (maximumItemsPerMeal >= 2) {
         for (qsizetype i = 0; i < candidates.size() - 1; ++i) {
             for (qsizetype j = i + 1; j < candidates.size(); ++j) {
-                const MealPlanItem firstItem =
-                    makeMealPlanItem(candidates.at(i));
-                const MealPlanItem secondItem =
-                    makeMealPlanItem(candidates.at(j));
-                choices.append({
-                    mealType,
-                    {firstItem, secondItem},
-                    firstItem.calories + secondItem.calories});
+                appendChoice(candidates.at(i), &candidates.at(j));
             }
         }
     }
 
+    QVector<MealChoice> choices;
+    for (auto it = choicesByCalorieBucket.begin();
+         it != choicesByCalorieBucket.end();
+         ++it) {
+        QVector<MealChoice>& bucketChoices = it.value();
+        std::stable_sort(
+            bucketChoices.begin(),
+            bucketChoices.end(),
+            isBetterMealChoice);
+        if (bucketChoices.size() > kMaximumChoicesPerCalorieBucket) {
+            bucketChoices.resize(kMaximumChoicesPerCalorieBucket);
+        }
+        choices += std::move(bucketChoices);
+    }
+
+    std::stable_sort(
+        choices.begin(),
+        choices.end(),
+        isBetterMealChoice);
+    if (choices.size() > kMaximumChoicesPerMeal) {
+        choices.resize(kMaximumChoicesPerMeal);
+    }
     return choices;
 }
 
@@ -229,64 +591,131 @@ int mealPlanItemCount(const MealPlan& plan)
         + plan.snacks.size();
 }
 
-double mealRatioDifference(
-    const QVector<MealChoice>& choices,
-    double targetCalories,
-    const MealRecommendationOptions& options)
-{
-    double totalDifference = 0.0;
-
-    for (const MealChoice& choice : choices) {
-        double ratio = 0.0;
-        switch (choice.mealType) {
-        case MealType::Breakfast:
-            ratio = options.breakfastRatio;
-            break;
-        case MealType::Lunch:
-            ratio = options.lunchRatio;
-            break;
-        case MealType::Dinner:
-            ratio = options.dinnerRatio;
-            break;
-        case MealType::Snack:
-            ratio = options.snackRatio;
-            break;
-        }
-
-        totalDifference += std::abs(
-            choice.calories - targetCalories * ratio);
-    }
-
-    return totalDifference;
-}
-
 void appendChoiceToPlan(MealPlan& plan, const MealChoice& choice)
 {
+    QVector<MealPlanItem> items;
+    items.reserve(choice.itemCount);
+    items.append(makeMealPlanItem(*choice.firstRecipe));
+    if (choice.secondRecipe != nullptr) {
+        items.append(makeMealPlanItem(*choice.secondRecipe));
+    }
+
     switch (choice.mealType) {
     case MealType::Breakfast:
-        plan.breakfast = choice.items;
+        plan.breakfast = std::move(items);
         break;
     case MealType::Lunch:
-        plan.lunch = choice.items;
+        plan.lunch = std::move(items);
         break;
     case MealType::Dinner:
-        plan.dinner = choice.items;
+        plan.dinner = std::move(items);
         break;
     case MealType::Snack:
-        plan.snacks = choice.items;
+        plan.snacks = std::move(items);
         break;
     }
     plan.totalCalories += choice.calories;
+    addNutrition(plan.totalNutrition, choice.nutrition);
+}
+
+double macroDifference(
+    const NutritionFacts& actual,
+    const NutritionFacts& target)
+{
+    double totalRelativeDifference = 0.0;
+    int activeTargets = 0;
+
+    const auto addDifference = [&](double actualValue, double targetValue) {
+        // 值为 0 表示调用方没有为该营养素设置目标，不参与评分。
+        if (targetValue > kComparisonEpsilon) {
+            totalRelativeDifference +=
+                std::abs(actualValue - targetValue) / targetValue;
+            ++activeTargets;
+        }
+    };
+
+    addDifference(actual.proteinG, target.proteinG);
+    addDifference(actual.carbohydrateG, target.carbohydrateG);
+    addDifference(actual.fatG, target.fatG);
+
+    return activeTargets == 0
+        ? 0.0
+        : totalRelativeDifference / activeTargets;
+}
+
+struct ScoredMealPlan {
+    MealPlan plan;
+    double ratioDifference = 0.0;
+    double diversityAdjustedRatioDifference = 0.0;
+    double macroDifference = 0.0;
+    double preferenceScore = 0.0;
+    double dailyDifference = 0.0;
+};
+
+bool isBetterPlanScore(
+    const ScoredMealPlan& candidate,
+    const ScoredMealPlan& current)
+{
+    const qint64 candidateRatioTier = scoreTier(
+        candidate.diversityAdjustedRatioDifference,
+        kEquivalentPlanRatioDifference);
+    const qint64 currentRatioTier = scoreTier(
+        current.diversityAdjustedRatioDifference,
+        kEquivalentPlanRatioDifference);
+    if (candidateRatioTier != currentRatioTier) {
+        return candidateRatioTier < currentRatioTier;
+    }
+    const qint64 candidateMacroTier = scoreTier(
+        candidate.macroDifference,
+        kEquivalentMacroDifference);
+    const qint64 currentMacroTier = scoreTier(
+        current.macroDifference,
+        kEquivalentMacroDifference);
+    if (candidateMacroTier != currentMacroTier) {
+        return candidateMacroTier < currentMacroTier;
+    }
+    if (std::abs(candidate.preferenceScore - current.preferenceScore)
+        > kComparisonEpsilon) {
+        return candidate.preferenceScore > current.preferenceScore;
+    }
+    if (std::abs(candidate.diversityAdjustedRatioDifference
+                 - current.diversityAdjustedRatioDifference)
+        > kComparisonEpsilon) {
+        return candidate.diversityAdjustedRatioDifference
+            < current.diversityAdjustedRatioDifference;
+    }
+    if (std::abs(candidate.macroDifference - current.macroDifference)
+        > kComparisonEpsilon) {
+        return candidate.macroDifference < current.macroDifference;
+    }
+    if (std::abs(candidate.dailyDifference - current.dailyDifference)
+        > kComparisonEpsilon) {
+        return candidate.dailyDifference < current.dailyDifference;
+    }
+    return mealPlanItemCount(candidate.plan)
+        < mealPlanItemCount(current.plan);
 }
 
 std::optional<MealPlan> findBestMultiRecipePlan(
     const RecipesByMealType& groupedRecipes,
     double targetCalories,
-    const MealRecommendationOptions& options)
+    const MealRecommendationOptions& options,
+    const QHash<QString, double>& recipePreferenceScores,
+    QRandomGenerator* randomGenerator)
 {
     QVector<QVector<MealChoice>> choicesByEnabledMeal;
 
-    const auto appendChoicesIfEnabled = [&choicesByEnabledMeal, &options](
+    const double minimumCalories =
+        targetCalories * (1.0 - options.toleranceRatio);
+    const double maximumCalories =
+        targetCalories * (1.0 + options.toleranceRatio);
+
+    const auto appendChoicesIfEnabled = [
+                                            &choicesByEnabledMeal,
+                                            &options,
+                                            &recipePreferenceScores,
+                                            targetCalories,
+                                            maximumCalories](
                                             const QVector<Recipe>& candidates,
                                             MealType mealType,
                                             double ratio) {
@@ -294,7 +723,13 @@ std::optional<MealPlan> findBestMultiRecipePlan(
             choicesByEnabledMeal.append(buildMealChoices(
                 candidates,
                 mealType,
-                options.maximumItemsPerMeal));
+                options.maximumItemsPerMeal,
+                targetCalories,
+                ratio,
+                maximumCalories,
+                options.nutritionTarget,
+                recipePreferenceScores,
+                options.recentRecipePenalties));
         }
     };
 
@@ -315,70 +750,235 @@ std::optional<MealPlan> findBestMultiRecipePlan(
         MealType::Snack,
         options.snackRatio);
 
-    const double minimumCalories =
-        targetCalories * (1.0 - options.toleranceRatio);
-    const double maximumCalories =
-        targetCalories * (1.0 + options.toleranceRatio);
-    std::optional<MealPlan> bestPlan;
-    double bestRatioDifference = 0.0;
-    double bestDailyDifference = 0.0;
-    QVector<MealChoice> currentChoices;
+    for (const QVector<MealChoice>& choices : choicesByEnabledMeal) {
+        if (choices.isEmpty()) {
+            return std::nullopt;
+        }
+    }
 
-    std::function<void(qsizetype, double)> search =
-        [&](qsizetype mealIndex, double currentCalories) {
-            // 所有食谱热量均为正数，超过上限后无需继续向下搜索。
-            if (currentCalories > maximumCalories + kComparisonEpsilon) {
-                return;
-            }
+    const int mealCount = static_cast<int>(choicesByEnabledMeal.size());
+    QVector<double> remainingMinimumCalories(mealCount + 1, 0.0);
+    QVector<double> remainingMaximumCalories(mealCount + 1, 0.0);
+    for (int mealIndex = mealCount - 1; mealIndex >= 0; --mealIndex) {
+        double minimumChoiceCalories =
+            std::numeric_limits<double>::infinity();
+        double maximumChoiceCalories = 0.0;
+        for (const MealChoice& choice :
+             choicesByEnabledMeal.at(mealIndex)) {
+            minimumChoiceCalories = std::min(
+                minimumChoiceCalories,
+                choice.calories);
+            maximumChoiceCalories = std::max(
+                maximumChoiceCalories,
+                choice.calories);
+        }
+        remainingMinimumCalories[mealIndex] =
+            minimumChoiceCalories
+            + remainingMinimumCalories.at(mealIndex + 1);
+        remainingMaximumCalories[mealIndex] =
+            maximumChoiceCalories
+            + remainingMaximumCalories.at(mealIndex + 1);
+    }
 
-            if (mealIndex == choicesByEnabledMeal.size()) {
-                if (currentCalories + kComparisonEpsilon < minimumCalories) {
-                    return;
-                }
+    struct PartialMealPlan {
+        QVector<const MealChoice*> choices;
+        double totalCalories = 0.0;
+        NutritionFacts totalNutrition;
+        double ratioDifference = 0.0;
+        double preferenceTotal = 0.0;
+        double recentExposureTotal = 0.0;
+        int itemCount = 0;
+        double processedRatio = 0.0;
+    };
 
-                MealPlan candidate;
-                for (const MealChoice& choice : currentChoices) {
-                    appendChoiceToPlan(candidate, choice);
-                }
+    const auto preferenceScoreOf = [](const PartialMealPlan& plan) {
+        return plan.itemCount == 0
+            ? 0.0
+            : plan.preferenceTotal / plan.itemCount;
+    };
+    const auto partialMacroDifference = [&options](
+                                            const PartialMealPlan& plan) {
+        return options.nutritionTarget.has_value()
+            ? macroDifference(
+                  plan.totalNutrition,
+                  scaledNutritionTarget(
+                      *options.nutritionTarget,
+                      plan.processedRatio))
+            : 0.0;
+    };
+    const auto isBetterPartial = [
+                                     targetCalories,
+                                     &partialMacroDifference,
+                                     &preferenceScoreOf](
+                                     const PartialMealPlan& candidate,
+                                     const PartialMealPlan& current) {
+        const double candidateMacro = partialMacroDifference(candidate);
+        const double currentMacro = partialMacroDifference(current);
+        const double candidatePreference = preferenceScoreOf(candidate);
+        const double currentPreference = preferenceScoreOf(current);
+        const double candidateExposure = candidate.itemCount == 0
+            ? 0.0
+            : candidate.recentExposureTotal / candidate.itemCount;
+        const double currentExposure = current.itemCount == 0
+            ? 0.0
+            : current.recentExposureTotal / current.itemCount;
+        const double candidateAdjustedRatio =
+            candidate.ratioDifference
+            + targetCalories
+                * kRecentExposurePenaltyRatio
+                * candidateExposure;
+        const double currentAdjustedRatio =
+            current.ratioDifference
+            + targetCalories
+                * kRecentExposurePenaltyRatio
+                * currentExposure;
+        const double candidateProgressDifference = std::abs(
+            candidate.totalCalories
+            - targetCalories * candidate.processedRatio);
+        const double currentProgressDifference = std::abs(
+            current.totalCalories
+            - targetCalories * current.processedRatio);
 
-                const double ratioDifference = mealRatioDifference(
-                    currentChoices,
-                    targetCalories,
-                    options);
-                const double dailyDifference =
-                    std::abs(candidate.totalCalories - targetCalories);
-                const bool isBetter =
-                    !bestPlan.has_value()
-                    || ratioDifference
-                        < bestRatioDifference - kComparisonEpsilon
-                    || (std::abs(ratioDifference - bestRatioDifference)
-                            <= kComparisonEpsilon
-                        && (dailyDifference
-                                < bestDailyDifference - kComparisonEpsilon
-                            || (std::abs(
-                                    dailyDifference - bestDailyDifference)
-                                    <= kComparisonEpsilon
-                                && mealPlanItemCount(candidate)
-                                    < mealPlanItemCount(*bestPlan))));
+        const qint64 candidateRatioTier = scoreTier(
+            candidateAdjustedRatio,
+            kEquivalentPlanRatioDifference);
+        const qint64 currentRatioTier = scoreTier(
+            currentAdjustedRatio,
+            kEquivalentPlanRatioDifference);
+        if (candidateRatioTier != currentRatioTier) {
+            return candidateRatioTier < currentRatioTier;
+        }
+        const qint64 candidateMacroTier = scoreTier(
+            candidateMacro,
+            kEquivalentMacroDifference);
+        const qint64 currentMacroTier = scoreTier(
+            currentMacro,
+            kEquivalentMacroDifference);
+        if (candidateMacroTier != currentMacroTier) {
+            return candidateMacroTier < currentMacroTier;
+        }
+        if (std::abs(candidatePreference - currentPreference)
+            > kComparisonEpsilon) {
+            return candidatePreference > currentPreference;
+        }
+        if (std::abs(candidateAdjustedRatio - currentAdjustedRatio)
+            > kComparisonEpsilon) {
+            return candidateAdjustedRatio < currentAdjustedRatio;
+        }
+        if (std::abs(candidateMacro - currentMacro)
+            > kComparisonEpsilon) {
+            return candidateMacro < currentMacro;
+        }
+        if (std::abs(candidateProgressDifference
+                     - currentProgressDifference)
+            > kComparisonEpsilon) {
+            return candidateProgressDifference
+                < currentProgressDifference;
+        }
+        return candidate.itemCount < current.itemCount;
+    };
 
-                if (isBetter) {
-                    bestPlan = std::move(candidate);
-                    bestRatioDifference = ratioDifference;
-                    bestDailyDifference = dailyDifference;
-                }
-                return;
-            }
+    QVector<PartialMealPlan> beam(1);
+    for (int mealIndex = 0; mealIndex < mealCount; ++mealIndex) {
+        QVector<PartialMealPlan> expanded;
+        expanded.reserve(
+            beam.size()
+            * choicesByEnabledMeal.at(mealIndex).size());
+        const int nextMealIndex = mealIndex + 1;
 
+        for (const PartialMealPlan& partial : beam) {
             for (const MealChoice& choice :
                  choicesByEnabledMeal.at(mealIndex)) {
-                currentChoices.append(choice);
-                search(mealIndex + 1, currentCalories + choice.calories);
-                currentChoices.removeLast();
-            }
-        };
+                const double nextCalories =
+                    partial.totalCalories + choice.calories;
+                if (nextCalories
+                        + remainingMinimumCalories.at(nextMealIndex)
+                    > maximumCalories + kComparisonEpsilon) {
+                    continue;
+                }
+                if (nextCalories
+                        + remainingMaximumCalories.at(nextMealIndex)
+                        + kComparisonEpsilon
+                    < minimumCalories) {
+                    continue;
+                }
 
-    search(0, 0.0);
-    return bestPlan;
+                PartialMealPlan candidate = partial;
+                candidate.choices.append(&choice);
+                candidate.totalCalories = nextCalories;
+                addNutrition(candidate.totalNutrition, choice.nutrition);
+                candidate.ratioDifference += choice.ratioDifference;
+                candidate.preferenceTotal +=
+                    choice.preferenceScore * choice.itemCount;
+                candidate.recentExposureTotal +=
+                    choice.recentExposurePenalty * choice.itemCount;
+                candidate.itemCount += choice.itemCount;
+                candidate.processedRatio += choice.targetRatio;
+                expanded.append(std::move(candidate));
+            }
+        }
+
+        if (expanded.isEmpty()) {
+            return std::nullopt;
+        }
+        std::stable_sort(
+            expanded.begin(),
+            expanded.end(),
+            isBetterPartial);
+        if (expanded.size() > kMealPlanBeamWidth) {
+            expanded.resize(kMealPlanBeamWidth);
+        }
+        beam = std::move(expanded);
+    }
+
+    QVector<ScoredMealPlan> rankedPlans;
+    rankedPlans.reserve(beam.size());
+    for (const PartialMealPlan& partial : beam) {
+        if (partial.totalCalories + kComparisonEpsilon < minimumCalories
+            || partial.totalCalories
+                > maximumCalories + kComparisonEpsilon) {
+            continue;
+        }
+
+        MealPlan plan;
+        for (const MealChoice* choice : partial.choices) {
+            appendChoiceToPlan(plan, *choice);
+        }
+        rankedPlans.append({
+            std::move(plan),
+            partial.ratioDifference,
+            partial.ratioDifference
+                + targetCalories
+                    * kRecentExposurePenaltyRatio
+                    * (partial.itemCount == 0
+                           ? 0.0
+                           : partial.recentExposureTotal
+                               / partial.itemCount),
+            options.nutritionTarget.has_value()
+                ? macroDifference(
+                      partial.totalNutrition,
+                      *options.nutritionTarget)
+                : 0.0,
+            preferenceScoreOf(partial),
+            std::abs(partial.totalCalories - targetCalories)});
+    }
+
+    if (rankedPlans.isEmpty()) {
+        return std::nullopt;
+    }
+    std::stable_sort(
+        rankedPlans.begin(),
+        rankedPlans.end(),
+        isBetterPlanScore);
+
+    if (randomGenerator != nullptr) {
+        const int poolSize = std::min(
+            kRandomPlanPoolSize,
+            static_cast<int>(rankedPlans.size()));
+        const int selectedIndex = randomGenerator->bounded(poolSize);
+        return std::move(rankedPlans[selectedIndex].plan);
+    }
+    return std::move(rankedPlans.first().plan);
 }
 
 } // namespace
@@ -432,17 +1032,36 @@ ServiceResult<MealPlan> MealRecommender::generate(
         options.maximumItemsPerMeal <= 0
         || options.maximumItemsPerMeal > kMaximumSupportedItemsPerMeal;
 
+    bool invalidNutritionTarget = false;
+    if (options.nutritionTarget.has_value()) {
+        const NutritionFacts& target = *options.nutritionTarget;
+        invalidNutritionTarget =
+            !isFiniteNonNegative(target.proteinG)
+            || !isFiniteNonNegative(target.carbohydrateG)
+            || !isFiniteNonNegative(target.fatG)
+            || (target.proteinG <= kComparisonEpsilon
+                && target.carbohydrateG <= kComparisonEpsilon
+                && target.fatG <= kComparisonEpsilon);
+    }
+
     if (invalidTolerance
         || invalidRatios
         || invalidRatioTotal
         || invalidSnackOptions
-        || invalidItemCount) {
+        || invalidItemCount
+        || invalidNutritionTarget
+        || !isValidPreference(options.preference)
+        || !isValidRecentRecipePenalties(
+            options.recentRecipePenalties)) {
         return ServiceResult<MealPlan>::failure(
             QStringLiteral("INVALID_OPTIONS"),
             QStringLiteral(
                 "食谱推荐选项不合法：容差必须为 0～10%，各餐比例必须为"
                 "非负有限数且合计为 1，加餐开关必须与加餐比例一致，"
-                "每餐最大项目数必须为 1～2。"));
+                "每餐最大项目数必须为 1～2；营养目标中的蛋白质、碳水和"
+                "脂肪必须为非负有限数，且至少一项大于 0；反馈偏好中的"
+                "项目权重必须为非负有限数，关键词权重必须为有限数；近期"
+                "食谱惩罚必须为非负有限数。"));
     }
 
     const QVector<Recipe> eligibleRecipes = filterEligibleRecipes(
@@ -460,6 +1079,10 @@ ServiceResult<MealPlan> MealRecommender::generate(
 
     const RecipesByMealType groupedRecipes =
         groupRecipesByMealType(eligibleRecipes);
+    const QHash<QString, double> recipePreferenceScores =
+        buildRecipePreferenceScores(
+            eligibleRecipes,
+            options.preference);
     const QStringList missingMealTypes = findMissingRequiredMealTypes(
         groupedRecipes,
         options);
@@ -471,38 +1094,51 @@ ServiceResult<MealPlan> MealRecommender::generate(
                 .arg(missingMealTypes.join(QStringLiteral("、"))));
     }
 
+    std::optional<QRandomGenerator> randomGenerator;
+    if (options.randomSeed.has_value()) {
+        randomGenerator.emplace(*options.randomSeed);
+    }
+    QRandomGenerator* generator = randomGenerator.has_value()
+        ? &*randomGenerator
+        : nullptr;
+
     MealPlan singleRecipePlan;
     appendSingleMealIfEnabled(
         singleRecipePlan.breakfast,
         groupedRecipes.breakfast,
         options.breakfastRatio,
-        targetCalories);
+        targetCalories,
+        generator);
     appendSingleMealIfEnabled(
         singleRecipePlan.lunch,
         groupedRecipes.lunch,
         options.lunchRatio,
-        targetCalories);
+        targetCalories,
+        generator);
     appendSingleMealIfEnabled(
         singleRecipePlan.dinner,
         groupedRecipes.dinner,
         options.dinnerRatio,
-        targetCalories);
+        targetCalories,
+        generator);
     appendSingleMealIfEnabled(
         singleRecipePlan.snacks,
         groupedRecipes.snacks,
         options.snackRatio,
-        targetCalories);
+        targetCalories,
+        generator);
 
-    const auto addMealCalories = [&singleRecipePlan](
+    const auto addMealNutrition = [&singleRecipePlan](
                                       const QVector<MealPlanItem>& items) {
         for (const MealPlanItem& item : items) {
             singleRecipePlan.totalCalories += item.calories;
+            addNutrition(singleRecipePlan.totalNutrition, item.nutrition);
         }
     };
-    addMealCalories(singleRecipePlan.breakfast);
-    addMealCalories(singleRecipePlan.lunch);
-    addMealCalories(singleRecipePlan.dinner);
-    addMealCalories(singleRecipePlan.snacks);
+    addMealNutrition(singleRecipePlan.breakfast);
+    addMealNutrition(singleRecipePlan.lunch);
+    addMealNutrition(singleRecipePlan.dinner);
+    addMealNutrition(singleRecipePlan.snacks);
 
     const double minimumDailyCalories =
         targetCalories * (1.0 - options.toleranceRatio);
@@ -514,7 +1150,10 @@ ServiceResult<MealPlan> MealRecommender::generate(
         && singleRecipePlan.totalCalories
             <= maximumDailyCalories + kComparisonEpsilon;
 
-    if (dailyCaloriesWithinTolerance) {
+    if (dailyCaloriesWithinTolerance
+        && !options.nutritionTarget.has_value()
+        && !options.preference.hasSignals()
+        && options.recentRecipePenalties.isEmpty()) {
         return ServiceResult<MealPlan>::success(
             std::move(singleRecipePlan),
             QStringLiteral("已生成每餐一份食谱的每日膳食计划。"));
@@ -524,7 +1163,9 @@ ServiceResult<MealPlan> MealRecommender::generate(
         findBestMultiRecipePlan(
             groupedRecipes,
             targetCalories,
-            options);
+            options,
+            recipePreferenceScores,
+            generator);
 
     if (bestMultiRecipePlan.has_value()) {
         return ServiceResult<MealPlan>::success(

@@ -1,5 +1,7 @@
 #include "recommendation/ExerciseRecommender.h"
 
+#include <QSet>
+
 #include <cmath>
 #include <limits>
 
@@ -409,6 +411,207 @@ int main()
         || std::abs(bestSingleResult.data.first().caloriesBurned - 196.0)
             > 1e-9) {
         return 31;
+    }
+
+    // 三种运动目标使用相同热量硬约束，但会在全部合法候选中选择不同的
+    // 强度或类别。这里限制为单项运动，便于精确验证目标排序。
+    Exercise lightHealthExercise;
+    lightHealthExercise.id = QStringLiteral("light-health");
+    lightHealthExercise.name = QStringLiteral("轻松步行");
+    lightHealthExercise.metValue = 3.0;
+    lightHealthExercise.category = ExerciseCategory::Aerobic;
+
+    Exercise buildFitnessExercise;
+    buildFitnessExercise.id = QStringLiteral("build-fitness");
+    buildFitnessExercise.name = QStringLiteral("中等强度训练");
+    buildFitnessExercise.metValue = 5.0;
+    buildFitnessExercise.category = ExerciseCategory::Aerobic;
+
+    Exercise muscleGainCardio;
+    muscleGainCardio.id = QStringLiteral("high-cardio");
+    muscleGainCardio.name = QStringLiteral("较高强度有氧");
+    muscleGainCardio.metValue = 6.5;
+    muscleGainCardio.category = ExerciseCategory::Aerobic;
+
+    Exercise muscleGainStrength = muscleGainCardio;
+    muscleGainStrength.id = QStringLiteral("strength-training");
+    muscleGainStrength.name = QStringLiteral("力量训练");
+    muscleGainStrength.metValue = 6.5;
+    muscleGainStrength.category = ExerciseCategory::Strength;
+
+    const QVector<Exercise> goalDatabase{
+        lightHealthExercise,
+        buildFitnessExercise,
+        muscleGainCardio,
+        muscleGainStrength};
+    ExerciseRecommendationOptions goalOptions = options;
+    goalOptions.maximumExerciseItems = 1;
+
+    UserProfile lightHealthUser = validUser;
+    lightHealthUser.exerciseGoal = ExerciseGoal::LightHealth;
+    const auto lightHealthResult = recommender.generate(
+        lightHealthUser,
+        196.0,
+        goalDatabase,
+        goalOptions);
+    if (!lightHealthResult.ok
+        || lightHealthResult.data.first().exerciseId
+            != QStringLiteral("light-health")) {
+        return 32;
+    }
+
+    UserProfile buildFitnessUser = validUser;
+    buildFitnessUser.exerciseGoal = ExerciseGoal::BuildFitness;
+    const auto buildFitnessResult = recommender.generate(
+        buildFitnessUser,
+        196.0,
+        goalDatabase,
+        goalOptions);
+    if (!buildFitnessResult.ok
+        || buildFitnessResult.data.first().exerciseId
+            != QStringLiteral("build-fitness")) {
+        return 33;
+    }
+
+    UserProfile muscleGainUser = validUser;
+    muscleGainUser.exerciseGoal = ExerciseGoal::MuscleGain;
+    const auto muscleGainResult = recommender.generate(
+        muscleGainUser,
+        196.0,
+        goalDatabase,
+        goalOptions);
+    if (!muscleGainResult.ok
+        || muscleGainResult.data.first().exerciseId
+            != QStringLiteral("strength-training")) {
+        return 34;
+    }
+
+    // 如果某次过滤后没有力量类别，增肌目标仍回退到较高强度候选。
+    const auto muscleGainFallbackResult = recommender.generate(
+        muscleGainUser,
+        196.0,
+        {lightHealthExercise, buildFitnessExercise, muscleGainCardio},
+        goalOptions);
+    if (!muscleGainFallbackResult.ok
+        || muscleGainFallbackResult.data.first().exerciseId
+            != QStringLiteral("high-cardio")) {
+        return 35;
+    }
+
+    // 同目标、同 MET、同热量的候选中，历史星级对应的项目权重应打破平局。
+    Exercise feedbackLow = buildFitnessExercise;
+    feedbackLow.id = QStringLiteral("feedback-low");
+    Exercise feedbackHigh = buildFitnessExercise;
+    feedbackHigh.id = QStringLiteral("feedback-high");
+
+    ExerciseRecommendationOptions feedbackOptions = goalOptions;
+    feedbackOptions.preference.itemWeights.insert(
+        feedbackLow.id,
+        *feedbackWeightFromStars(1));
+    feedbackOptions.preference.itemWeights.insert(
+        feedbackHigh.id,
+        *feedbackWeightFromStars(5));
+    const auto feedbackResult = recommender.generate(
+        buildFitnessUser,
+        196.0,
+        {feedbackLow, feedbackHigh},
+        feedbackOptions);
+    if (!feedbackResult.ok
+        || feedbackResult.data.first().exerciseId
+            != QStringLiteral("feedback-high")) {
+        return 36;
+    }
+
+    ExerciseRecommendationOptions invalidPreferenceOptions = goalOptions;
+    invalidPreferenceOptions.preference.itemWeights.insert(
+        QStringLiteral("invalid-weight"),
+        std::numeric_limits<double>::quiet_NaN());
+    if (recommender.generate(
+            buildFitnessUser,
+            196.0,
+            goalDatabase,
+            invalidPreferenceOptions).code
+        != QStringLiteral("INVALID_OPTIONS")) {
+        return 37;
+    }
+
+    // 近期出现过的运动会受到软性降权，同等强度和热量条件下优先换新。
+    Exercise recentExercise = buildFitnessExercise;
+    recentExercise.id = QStringLiteral("recent-exercise");
+    Exercise freshExercise = buildFitnessExercise;
+    freshExercise.id = QStringLiteral("fresh-exercise");
+    ExerciseRecommendationOptions recentOptions = goalOptions;
+    recentOptions.recentExercisePenalties.insert(recentExercise.id, 1.0);
+    const auto recentResult = recommender.generate(
+        buildFitnessUser,
+        196.0,
+        {recentExercise, freshExercise},
+        recentOptions);
+    if (!recentResult.ok
+        || recentResult.data.first().exerciseId
+            != QStringLiteral("fresh-exercise")) {
+        return 38;
+    }
+
+    ExerciseRecommendationOptions invalidRecentOptions = goalOptions;
+    invalidRecentOptions.recentExercisePenalties.insert(
+        QStringLiteral("bad-recent-penalty"), -0.1);
+    if (recommender.generate(
+            buildFitnessUser,
+            196.0,
+            goalDatabase,
+            invalidRecentOptions).code
+        != QStringLiteral("INVALID_OPTIONS")) {
+        return 39;
+    }
+
+    // 随机种子只在等质量候选池中选择；同种子可复现，不同种子能产生变化。
+    QVector<Exercise> equivalentExercises;
+    for (int index = 0; index < 12; ++index) {
+        Exercise equivalent = buildFitnessExercise;
+        equivalent.id = QStringLiteral("equivalent-%1").arg(index);
+        equivalent.name = equivalent.id;
+        equivalentExercises.append(equivalent);
+    }
+    ExerciseRecommendationOptions seededOptions = goalOptions;
+    seededOptions.randomSeed = 20260907;
+    const auto firstSeeded = recommender.generate(
+        buildFitnessUser, 196.0, equivalentExercises, seededOptions);
+    const auto repeatedSeeded = recommender.generate(
+        buildFitnessUser, 196.0, equivalentExercises, seededOptions);
+    if (!firstSeeded.ok
+        || !repeatedSeeded.ok
+        || firstSeeded.data.first().exerciseId
+            != repeatedSeeded.data.first().exerciseId) {
+        return 40;
+    }
+    QSet<QString> seededExerciseIds;
+    for (quint32 seed = 1; seed <= 16; ++seed) {
+        seededOptions.randomSeed = seed;
+        const auto varied = recommender.generate(
+            buildFitnessUser, 196.0, equivalentExercises, seededOptions);
+        if (!varied.ok) return 41;
+        seededExerciseIds.insert(varied.data.first().exerciseId);
+    }
+    if (seededExerciseIds.size() < 2) return 42;
+
+    // 32 个候选、最多 3 项的规模必须由有界搜索正常完成，不能组合爆炸。
+    QVector<Exercise> scaleExercises;
+    for (int index = 0; index < 32; ++index) {
+        Exercise scaleExercise = buildFitnessExercise;
+        scaleExercise.id = QStringLiteral("scale-%1").arg(index);
+        scaleExercise.name = scaleExercise.id;
+        scaleExercise.metValue = 4.0 + (index % 20) * 0.1;
+        scaleExercises.append(scaleExercise);
+    }
+    ExerciseRecommendationOptions scaleOptions = options;
+    scaleOptions.maximumDurationMinutesPerExercise = 60;
+    const auto scaleResult = recommender.generate(
+        buildFitnessUser, 500.0, scaleExercises, scaleOptions);
+    if (!scaleResult.ok
+        || scaleResult.data.isEmpty()
+        || scaleResult.data.size() > 3) {
+        return 43;
     }
 
     return 0;

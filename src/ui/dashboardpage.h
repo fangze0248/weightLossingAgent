@@ -7,9 +7,11 @@
 #include <optional>
 
 class IHealthCalculator;
+class IFeedbackService;
 class IPlanRepository;
 class IUserRepository;
 class QLabel;
+class MacronutrientChart;
 class QPushButton;
 class QTableWidget;
 class SessionManager;
@@ -22,6 +24,7 @@ public:
     explicit DashboardPage(IUserRepository& userRepository,
                            IPlanRepository& planRepository,
                            IHealthCalculator& healthCalculator,
+                           IFeedbackService& feedbackService,
                            SessionManager& sessionManager,
                            QWidget* parent = nullptr);
 
@@ -42,6 +45,7 @@ private:
     IUserRepository& userRepository_;
     IPlanRepository& planRepository_;
     IHealthCalculator& healthCalculator_;
+    IFeedbackService& feedbackService_;
     SessionManager& sessionManager_;
     std::optional<UserProfile> currentUser_;
     std::optional<WeeklyPlan> currentPlan_;
@@ -56,6 +60,7 @@ private:
     QLabel* exerciseRecommendationLabel_ = nullptr;
     QLabel* mealRecommendationLabel_ = nullptr;
     QLabel* recommendationSummaryLabel_ = nullptr;
+    MacronutrientChart* macronutrientChart_ = nullptr;
     QLabel* planPeriodLabel_ = nullptr;
     QTableWidget* checkInTable_ = nullptr;
     QPushButton* checkInButton_ = nullptr;

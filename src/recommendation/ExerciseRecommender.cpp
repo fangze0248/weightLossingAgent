@@ -1,25 +1,68 @@
 #include "recommendation/ExerciseRecommender.h"
 
+#include <QMap>
+#include <QRandomGenerator>
 #include <QSet>
 
+#include <algorithm>
 #include <cmath>
 #include <optional>
 #include <utility>
 
 namespace {
 
-// 老师要求运动总消耗不得超过目标值的 10%。
 constexpr double kMaximumAllowedToleranceRatio = 0.10;
-
-// 基础版本最多组合三项不同运动。
 constexpr int kMaximumSupportedExerciseItems = 3;
-
-// 避免浮点计算产生极小误差后误判 0.10 为非法值。
 constexpr double kComparisonEpsilon = 1e-9;
+constexpr double kCalorieBucketSize = 5.0;
+constexpr int kMaximumStatesPerCalorieBucket = 6;
+constexpr int kExerciseBeamWidth = 800;
+constexpr int kMaximumRankedPlans = 32;
+constexpr int kRandomPlanPoolSize = 5;
+constexpr double kRecentExposurePenaltyWeight = 0.75;
+constexpr double kEquivalentGoalPenalty = 0.25;
+constexpr double kEquivalentCalorieRatio = 0.03;
 
 bool isFinitePositive(double value)
 {
     return std::isfinite(value) && value > 0.0;
+}
+
+bool isFiniteNonNegative(double value)
+{
+    return std::isfinite(value) && value >= 0.0;
+}
+
+bool isValidPreference(const RecommendationPreference& preference)
+{
+    for (auto it = preference.itemWeights.cbegin();
+         it != preference.itemWeights.cend();
+         ++it) {
+        if (it.key().trimmed().isEmpty()
+            || !isFiniteNonNegative(it.value())) {
+            return false;
+        }
+    }
+    for (auto it = preference.keywordWeights.cbegin();
+         it != preference.keywordWeights.cend();
+         ++it) {
+        if (it.key().trimmed().isEmpty() || !std::isfinite(it.value())) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool isValidRecentExercisePenalties(
+    const QHash<QString, double>& penalties)
+{
+    for (auto it = penalties.cbegin(); it != penalties.cend(); ++it) {
+        if (it.key().trimmed().isEmpty()
+            || !isFiniteNonNegative(it.value())) {
+            return false;
+        }
+    }
+    return true;
 }
 
 QVector<Exercise> filterEligibleExercises(
@@ -27,7 +70,6 @@ QVector<Exercise> filterEligibleExercises(
     const QVector<Exercise>& exerciseDatabase,
     const ExerciseRecommendationOptions& options)
 {
-    // QSet 用于快速判断某个运动 ID 是否应被排除，同时自动合并重复项。
     QSet<QString> excludedIds;
     for (const QString& id : user.dislikedExerciseIds) {
         excludedIds.insert(id.trimmed());
@@ -38,21 +80,13 @@ QVector<Exercise> filterEligibleExercises(
 
     QVector<Exercise> eligibleExercises;
     eligibleExercises.reserve(exerciseDatabase.size());
-
-    // 同一个 ID 只保留数据库中第一次出现的记录，避免最终计划重复选择
-    // 实际上属于同一种运动的数据。
     QSet<QString> acceptedIds;
-
     for (const Exercise& exercise : exerciseDatabase) {
         const QString normalizedId = exercise.id.trimmed();
-
-        // ID 是计划项与数据库之间的关联键，空 ID 无法安全写入计划。
-        const bool hasValidId = !normalizedId.isEmpty();
-        const bool hasValidMet = isFinitePositive(exercise.metValue);
-        const bool isExcluded = excludedIds.contains(normalizedId);
-        const bool isDuplicate = acceptedIds.contains(normalizedId);
-
-        if (!hasValidId || !hasValidMet || isExcluded || isDuplicate) {
+        if (normalizedId.isEmpty()
+            || !isFinitePositive(exercise.metValue)
+            || excludedIds.contains(normalizedId)
+            || acceptedIds.contains(normalizedId)) {
             continue;
         }
 
@@ -61,7 +95,6 @@ QVector<Exercise> filterEligibleExercises(
         eligibleExercises.append(std::move(normalizedExercise));
         acceptedIds.insert(normalizedId);
     }
-
     return eligibleExercises;
 }
 
@@ -70,88 +103,52 @@ double calculateCaloriesBurned(
     double weightKg,
     int durationMinutes)
 {
-    // 通用 MET 估算公式：
-    // 千卡 = MET × 3.5 × 体重(kg) ÷ 200 × 时长(min)。
     return metValue * 3.5 * weightKg / 200.0 * durationMinutes;
 }
 
-std::optional<ExercisePlanItem> findBestSingleExercise(
-    double weightKg,
-    double targetCalories,
-    const QVector<Exercise>& eligibleExercises,
+double exerciseGoalPenalty(
+    const Exercise& exercise,
+    ExerciseGoal goal,
     const ExerciseRecommendationOptions& options)
 {
-    const double maximumCalories =
-        targetCalories * (1.0 + options.upperToleranceRatio);
-    std::optional<ExercisePlanItem> bestItem;
+    double preferredMinimumMet = 2.0;
+    double preferredMaximumMet = 3.5;
+    double categoryPenalty = 0.0;
 
-    for (const Exercise& exercise : eligibleExercises) {
-        int duration = options.minimumDurationMinutes;
-
-        while (duration <= options.maximumDurationMinutesPerExercise) {
-            const double calories = calculateCaloriesBurned(
-                exercise.metValue,
-                weightKg,
-                duration);
-
-            const bool reachesTarget =
-                calories + kComparisonEpsilon >= targetCalories;
-            const bool staysWithinUpperBound =
-                calories <= maximumCalories + kComparisonEpsilon;
-
-            if (std::isfinite(calories)
-                && reachesTarget
-                && staysWithinUpperBound) {
-                ExercisePlanItem candidate;
-                candidate.exerciseId = exercise.id;
-                candidate.exerciseName = exercise.name;
-                candidate.durationMinutes = duration;
-                candidate.caloriesBurned = calories;
-
-                // 首先选择最接近目标值的方案；热量相同时选择时长更短的方案。
-                const bool isBetter =
-                    !bestItem.has_value()
-                    || candidate.caloriesBurned
-                        < bestItem->caloriesBurned - kComparisonEpsilon
-                    || (std::abs(candidate.caloriesBurned
-                                 - bestItem->caloriesBurned)
-                            <= kComparisonEpsilon
-                        && candidate.durationMinutes
-                            < bestItem->durationMinutes);
-
-                if (isBetter) {
-                    bestItem = std::move(candidate);
-                }
-
-                // 对同一运动而言，时长继续增加只会离目标更远。
-                break;
-            }
-
-            // 当前热量已经超过上限，后续更长时长不可能成为合法方案。
-            if (!std::isfinite(calories)
-                || calories > maximumCalories + kComparisonEpsilon) {
-                break;
-            }
-
-            // 先检查剩余空间，避免 duration + step 发生整数溢出。
-            if (options.maximumDurationMinutesPerExercise - duration
-                < options.durationStepMinutes) {
-                break;
-            }
-            duration += options.durationStepMinutes;
+    switch (goal) {
+    case ExerciseGoal::LightHealth:
+        preferredMinimumMet = 2.0;
+        preferredMaximumMet = 3.5;
+        break;
+    case ExerciseGoal::BuildFitness:
+        preferredMinimumMet = 4.0;
+        preferredMaximumMet = 6.0;
+        break;
+    case ExerciseGoal::MuscleGain:
+        preferredMinimumMet = 6.0;
+        preferredMaximumMet = 7.5;
+        if (exercise.category != ExerciseCategory::Strength) {
+            categoryPenalty = 100.0;
         }
+        break;
     }
 
-    return bestItem;
-}
-
-double totalCaloriesOf(const QVector<ExercisePlanItem>& items)
-{
-    double total = 0.0;
-    for (const ExercisePlanItem& item : items) {
-        total += item.caloriesBurned;
+    double intensityPenalty = 0.0;
+    if (exercise.metValue < preferredMinimumMet) {
+        intensityPenalty = preferredMinimumMet - exercise.metValue;
+    } else if (exercise.metValue > preferredMaximumMet) {
+        intensityPenalty = exercise.metValue - preferredMaximumMet;
     }
-    return total;
+
+    const double feedbackAdjustment =
+        options.preference.itemWeights.value(exercise.id, 1.0) - 1.0;
+    const double recentExposurePenalty =
+        options.recentExercisePenalties.value(exercise.id, 0.0)
+        * kRecentExposurePenaltyWeight;
+    return categoryPenalty
+        + intensityPenalty
+        + recentExposurePenalty
+        - feedbackAdjustment;
 }
 
 int totalDurationOf(const QVector<ExercisePlanItem>& items)
@@ -163,255 +160,224 @@ int totalDurationOf(const QVector<ExercisePlanItem>& items)
     return total;
 }
 
-std::optional<QVector<ExercisePlanItem>> findBestTwoExercises(
-    double weightKg,
-    double targetCalories,
-    const QVector<Exercise>& eligibleExercises,
-    const ExerciseRecommendationOptions& options)
+struct PartialExercisePlan {
+    QVector<ExercisePlanItem> items;
+    int lastExerciseIndex = -1;
+    double totalCalories = 0.0;
+    double goalPenaltyTotal = 0.0;
+};
+
+double averageGoalPenalty(const PartialExercisePlan& plan)
 {
-    if (options.maximumExerciseItems < 2 || eligibleExercises.size() < 2) {
-        return std::nullopt;
-    }
-
-    const double maximumCalories =
-        targetCalories * (1.0 + options.upperToleranceRatio);
-    std::optional<QVector<ExercisePlanItem>> bestPlan;
-
-    // i < j 保证一份方案不会重复使用同一种运动，也不会把
-    // “跑步 + 步行”和“步行 + 跑步”当作两个不同组合。
-    for (qsizetype i = 0; i < eligibleExercises.size() - 1; ++i) {
-        const Exercise& firstExercise = eligibleExercises.at(i);
-
-        for (qsizetype j = i + 1; j < eligibleExercises.size(); ++j) {
-            const Exercise& secondExercise = eligibleExercises.at(j);
-            int firstDuration = options.minimumDurationMinutes;
-
-            while (firstDuration
-                   <= options.maximumDurationMinutesPerExercise) {
-                const double firstCalories = calculateCaloriesBurned(
-                    firstExercise.metValue,
-                    weightKg,
-                    firstDuration);
-
-                if (!std::isfinite(firstCalories)
-                    || firstCalories > maximumCalories + kComparisonEpsilon) {
-                    break;
-                }
-
-                int secondDuration = options.minimumDurationMinutes;
-                while (secondDuration
-                       <= options.maximumDurationMinutesPerExercise) {
-                    const double secondCalories = calculateCaloriesBurned(
-                        secondExercise.metValue,
-                        weightKg,
-                        secondDuration);
-                    const double totalCalories =
-                        firstCalories + secondCalories;
-
-                    if (!std::isfinite(secondCalories)
-                        || !std::isfinite(totalCalories)
-                        || totalCalories
-                            > maximumCalories + kComparisonEpsilon) {
-                        break;
-                    }
-
-                    if (totalCalories + kComparisonEpsilon
-                        >= targetCalories) {
-                        ExercisePlanItem firstItem;
-                        firstItem.exerciseId = firstExercise.id;
-                        firstItem.exerciseName = firstExercise.name;
-                        firstItem.durationMinutes = firstDuration;
-                        firstItem.caloriesBurned = firstCalories;
-
-                        ExercisePlanItem secondItem;
-                        secondItem.exerciseId = secondExercise.id;
-                        secondItem.exerciseName = secondExercise.name;
-                        secondItem.durationMinutes = secondDuration;
-                        secondItem.caloriesBurned = secondCalories;
-
-                        QVector<ExercisePlanItem> candidate{
-                            firstItem,
-                            secondItem};
-
-                        const double bestCalories = bestPlan.has_value()
-                            ? totalCaloriesOf(*bestPlan)
-                            : 0.0;
-                        const bool isBetter =
-                            !bestPlan.has_value()
-                            || totalCalories
-                                < bestCalories - kComparisonEpsilon
-                            || (std::abs(totalCalories - bestCalories)
-                                    <= kComparisonEpsilon
-                                && totalDurationOf(candidate)
-                                    < totalDurationOf(*bestPlan));
-
-                        if (isBetter) {
-                            bestPlan = std::move(candidate);
-                        }
-
-                        // 固定第一项时长后，继续增加第二项时长只会
-                        // 使总热量离目标更远。
-                        break;
-                    }
-
-                    if (options.maximumDurationMinutesPerExercise
-                            - secondDuration
-                        < options.durationStepMinutes) {
-                        break;
-                    }
-                    secondDuration += options.durationStepMinutes;
-                }
-
-                if (options.maximumDurationMinutesPerExercise
-                        - firstDuration
-                    < options.durationStepMinutes) {
-                    break;
-                }
-                firstDuration += options.durationStepMinutes;
-            }
-        }
-    }
-
-    return bestPlan;
+    return plan.items.isEmpty()
+        ? 0.0
+        : plan.goalPenaltyTotal / plan.items.size();
 }
 
-std::optional<QVector<ExercisePlanItem>> findBestThreeExercises(
+bool isBetterPartial(
+    const PartialExercisePlan& candidate,
+    const PartialExercisePlan& current,
+    double targetCalories,
+    int maximumItems)
+{
+    const double candidateGoal = averageGoalPenalty(candidate);
+    const double currentGoal = averageGoalPenalty(current);
+    if (std::abs(candidateGoal - currentGoal) > kComparisonEpsilon) {
+        return candidateGoal < currentGoal;
+    }
+
+    const double progressTarget = targetCalories
+        * static_cast<double>(candidate.items.size()) / maximumItems;
+    const double candidateDifference = std::abs(
+        candidate.totalCalories - progressTarget);
+    const double currentDifference = std::abs(
+        current.totalCalories - progressTarget);
+    if (std::abs(candidateDifference - currentDifference)
+        > kComparisonEpsilon) {
+        return candidateDifference < currentDifference;
+    }
+    return totalDurationOf(candidate.items)
+        < totalDurationOf(current.items);
+}
+
+bool isBetterFinalPlan(
+    const PartialExercisePlan& candidate,
+    const PartialExercisePlan& current)
+{
+    const double candidateGoal = averageGoalPenalty(candidate);
+    const double currentGoal = averageGoalPenalty(current);
+    if (std::abs(candidateGoal - currentGoal) > kComparisonEpsilon) {
+        return candidateGoal < currentGoal;
+    }
+    if (std::abs(candidate.totalCalories - current.totalCalories)
+        > kComparisonEpsilon) {
+        return candidate.totalCalories < current.totalCalories;
+    }
+    const int candidateDuration = totalDurationOf(candidate.items);
+    const int currentDuration = totalDurationOf(current.items);
+    if (candidateDuration != currentDuration) {
+        return candidateDuration < currentDuration;
+    }
+    return candidate.items.size() < current.items.size();
+}
+
+void appendBoundedState(
+    QMap<int, QVector<PartialExercisePlan>>& buckets,
+    PartialExercisePlan state,
+    double targetCalories,
+    int maximumItems)
+{
+    const int bucket = static_cast<int>(std::floor(
+        state.totalCalories / kCalorieBucketSize));
+    QVector<PartialExercisePlan>& states = buckets[bucket];
+    states.append(std::move(state));
+    std::stable_sort(
+        states.begin(),
+        states.end(),
+        [targetCalories, maximumItems](
+            const PartialExercisePlan& left,
+            const PartialExercisePlan& right) {
+            return isBetterPartial(
+                left, right, targetCalories, maximumItems);
+        });
+    if (states.size() > kMaximumStatesPerCalorieBucket) {
+        states.resize(kMaximumStatesPerCalorieBucket);
+    }
+}
+
+void considerFinalPlan(
+    QVector<PartialExercisePlan>& rankedPlans,
+    const PartialExercisePlan& candidate)
+{
+    rankedPlans.append(candidate);
+    std::stable_sort(
+        rankedPlans.begin(),
+        rankedPlans.end(),
+        isBetterFinalPlan);
+    if (rankedPlans.size() > kMaximumRankedPlans) {
+        rankedPlans.resize(kMaximumRankedPlans);
+    }
+}
+
+std::optional<QVector<ExercisePlanItem>> findBestBoundedPlan(
     double weightKg,
     double targetCalories,
     const QVector<Exercise>& eligibleExercises,
-    const ExerciseRecommendationOptions& options)
+    const ExerciseRecommendationOptions& options,
+    ExerciseGoal goal)
 {
-    if (options.maximumExerciseItems < 3 || eligibleExercises.size() < 3) {
-        return std::nullopt;
-    }
-
     const double maximumCalories =
         targetCalories * (1.0 + options.upperToleranceRatio);
-    std::optional<QVector<ExercisePlanItem>> bestPlan;
+    QVector<PartialExercisePlan> beam(1);
+    QVector<PartialExercisePlan> rankedPlans;
 
-    // i < j < k 保证三项运动彼此不同，并消除排列顺序造成的重复搜索。
-    for (qsizetype i = 0; i < eligibleExercises.size() - 2; ++i) {
-        const Exercise& firstExercise = eligibleExercises.at(i);
-        for (qsizetype j = i + 1; j < eligibleExercises.size() - 1; ++j) {
-            const Exercise& secondExercise = eligibleExercises.at(j);
-            for (qsizetype k = j + 1; k < eligibleExercises.size(); ++k) {
-                const Exercise& thirdExercise = eligibleExercises.at(k);
-                int firstDuration = options.minimumDurationMinutes;
-
-                while (firstDuration
+    for (int itemCount = 1;
+         itemCount <= options.maximumExerciseItems;
+         ++itemCount) {
+        QMap<int, QVector<PartialExercisePlan>> nextBuckets;
+        for (const PartialExercisePlan& partial : beam) {
+            for (int exerciseIndex = partial.lastExerciseIndex + 1;
+                 exerciseIndex < eligibleExercises.size();
+                 ++exerciseIndex) {
+                const Exercise& exercise =
+                    eligibleExercises.at(exerciseIndex);
+                int duration = options.minimumDurationMinutes;
+                while (duration
                        <= options.maximumDurationMinutesPerExercise) {
-                    const double firstCalories = calculateCaloriesBurned(
-                        firstExercise.metValue,
+                    const double calories = calculateCaloriesBurned(
+                        exercise.metValue,
                         weightKg,
-                        firstDuration);
-                    if (!std::isfinite(firstCalories)
-                        || firstCalories
+                        duration);
+                    const double nextCalories =
+                        partial.totalCalories + calories;
+                    if (!std::isfinite(calories)
+                        || !std::isfinite(nextCalories)
+                        || nextCalories
                             > maximumCalories + kComparisonEpsilon) {
                         break;
                     }
 
-                    int secondDuration = options.minimumDurationMinutes;
-                    while (secondDuration
-                           <= options.maximumDurationMinutesPerExercise) {
-                        const double secondCalories = calculateCaloriesBurned(
-                            secondExercise.metValue,
-                            weightKg,
-                            secondDuration);
-                        const double firstTwoCalories =
-                            firstCalories + secondCalories;
-                        if (!std::isfinite(firstTwoCalories)
-                            || firstTwoCalories
-                                > maximumCalories + kComparisonEpsilon) {
-                            break;
-                        }
+                    PartialExercisePlan candidate = partial;
+                    candidate.items.append({
+                        exercise.id,
+                        exercise.name,
+                        duration,
+                        calories});
+                    candidate.lastExerciseIndex = exerciseIndex;
+                    candidate.totalCalories = nextCalories;
+                    candidate.goalPenaltyTotal += exerciseGoalPenalty(
+                        exercise,
+                        goal,
+                        options);
 
-                        int thirdDuration = options.minimumDurationMinutes;
-                        while (thirdDuration
-                               <= options.maximumDurationMinutesPerExercise) {
-                            const double thirdCalories = calculateCaloriesBurned(
-                                thirdExercise.metValue,
-                                weightKg,
-                                thirdDuration);
-                            const double totalCalories =
-                                firstTwoCalories + thirdCalories;
-
-                            if (!std::isfinite(thirdCalories)
-                                || !std::isfinite(totalCalories)
-                                || totalCalories
-                                    > maximumCalories + kComparisonEpsilon) {
-                                break;
-                            }
-
-                            if (totalCalories + kComparisonEpsilon
-                                >= targetCalories) {
-                                ExercisePlanItem firstItem{
-                                    firstExercise.id,
-                                    firstExercise.name,
-                                    firstDuration,
-                                    firstCalories};
-                                ExercisePlanItem secondItem{
-                                    secondExercise.id,
-                                    secondExercise.name,
-                                    secondDuration,
-                                    secondCalories};
-                                ExercisePlanItem thirdItem{
-                                    thirdExercise.id,
-                                    thirdExercise.name,
-                                    thirdDuration,
-                                    thirdCalories};
-
-                                QVector<ExercisePlanItem> candidate{
-                                    firstItem,
-                                    secondItem,
-                                    thirdItem};
-                                const double bestCalories = bestPlan.has_value()
-                                    ? totalCaloriesOf(*bestPlan)
-                                    : 0.0;
-                                const bool isBetter =
-                                    !bestPlan.has_value()
-                                    || totalCalories
-                                        < bestCalories - kComparisonEpsilon
-                                    || (std::abs(totalCalories - bestCalories)
-                                            <= kComparisonEpsilon
-                                        && totalDurationOf(candidate)
-                                            < totalDurationOf(*bestPlan));
-
-                                if (isBetter) {
-                                    bestPlan = std::move(candidate);
-                                }
-
-                                // 固定前两项时长后，更长的第三项只会增加偏差。
-                                break;
-                            }
-
-                            if (options.maximumDurationMinutesPerExercise
-                                    - thirdDuration
-                                < options.durationStepMinutes) {
-                                break;
-                            }
-                            thirdDuration += options.durationStepMinutes;
-                        }
-
-                        if (options.maximumDurationMinutesPerExercise
-                                - secondDuration
-                            < options.durationStepMinutes) {
-                            break;
-                        }
-                        secondDuration += options.durationStepMinutes;
+                    appendBoundedState(
+                        nextBuckets,
+                        candidate,
+                        targetCalories,
+                        options.maximumExerciseItems);
+                    if (nextCalories + kComparisonEpsilon
+                        >= targetCalories) {
+                        considerFinalPlan(rankedPlans, candidate);
                     }
 
-                    if (options.maximumDurationMinutesPerExercise
-                            - firstDuration
+                    if (options.maximumDurationMinutesPerExercise - duration
                         < options.durationStepMinutes) {
                         break;
                     }
-                    firstDuration += options.durationStepMinutes;
+                    duration += options.durationStepMinutes;
                 }
             }
         }
+
+        beam.clear();
+        for (auto it = nextBuckets.begin();
+             it != nextBuckets.end();
+             ++it) {
+            beam += std::move(it.value());
+        }
+        std::stable_sort(
+            beam.begin(),
+            beam.end(),
+            [targetCalories, &options](
+                const PartialExercisePlan& left,
+                const PartialExercisePlan& right) {
+                return isBetterPartial(
+                    left,
+                    right,
+                    targetCalories,
+                    options.maximumExerciseItems);
+            });
+        if (beam.size() > kExerciseBeamWidth) {
+            beam.resize(kExerciseBeamWidth);
+        }
+        if (beam.isEmpty()) break;
     }
 
-    return bestPlan;
+    if (rankedPlans.isEmpty()) {
+        return std::nullopt;
+    }
+
+    if (options.randomSeed.has_value()) {
+        const PartialExercisePlan& best = rankedPlans.first();
+        const double maximumEquivalentCalories =
+            best.totalCalories
+            + std::max(kCalorieBucketSize,
+                       targetCalories * kEquivalentCalorieRatio);
+        int poolSize = 1;
+        while (poolSize < rankedPlans.size()
+               && poolSize < kRandomPlanPoolSize
+               && averageGoalPenalty(rankedPlans.at(poolSize))
+                    <= averageGoalPenalty(best)
+                        + kEquivalentGoalPenalty
+                        + kComparisonEpsilon
+               && rankedPlans.at(poolSize).totalCalories
+                    <= maximumEquivalentCalories + kComparisonEpsilon) {
+            ++poolSize;
+        }
+        QRandomGenerator generator(*options.randomSeed ^ 0xc2b2ae35U);
+        return rankedPlans.at(generator.bounded(poolSize)).items;
+    }
+    return rankedPlans.first().items;
 }
 
 } // namespace
@@ -422,20 +388,16 @@ ServiceResult<QVector<ExercisePlanItem>> ExerciseRecommender::generate(
     const QVector<Exercise>& exerciseDatabase,
     const ExerciseRecommendationOptions& options) const
 {
-    // 目标热量必须是正常、有限的正数。
     if (!isFinitePositive(targetCalories)) {
         return ServiceResult<QVector<ExercisePlanItem>>::failure(
             QStringLiteral("INVALID_TARGET"),
             QStringLiteral("目标运动热量必须是大于 0 的有限数值。"));
     }
-
-    // MET 热量公式需要使用用户体重，其他用户字段不属于本模块的职责。
     if (!isFinitePositive(user.weightKg)) {
         return ServiceResult<QVector<ExercisePlanItem>>::failure(
             QStringLiteral("INVALID_USER"),
             QStringLiteral("用户体重必须是大于 0 的有限数值。"));
     }
-
     if (exerciseDatabase.isEmpty()) {
         return ServiceResult<QVector<ExercisePlanItem>>::failure(
             QStringLiteral("EMPTY_EXERCISE_DATABASE"),
@@ -447,30 +409,33 @@ ServiceResult<QVector<ExercisePlanItem>> ExerciseRecommender::generate(
         || options.minimumDurationMinutes <= 0
         || options.maximumDurationMinutesPerExercise
             < options.minimumDurationMinutes;
-
     const bool invalidItemCount =
         options.maximumExerciseItems <= 0
         || options.maximumExerciseItems > kMaximumSupportedExerciseItems;
-
     const bool invalidTolerance =
         !std::isfinite(options.upperToleranceRatio)
         || options.upperToleranceRatio < 0.0
         || options.upperToleranceRatio
             > kMaximumAllowedToleranceRatio + kComparisonEpsilon;
 
-    if (invalidDurationOptions || invalidItemCount || invalidTolerance) {
+    if (invalidDurationOptions
+        || invalidItemCount
+        || invalidTolerance
+        || !isValidPreference(options.preference)
+        || !isValidRecentExercisePenalties(
+            options.recentExercisePenalties)) {
         return ServiceResult<QVector<ExercisePlanItem>>::failure(
             QStringLiteral("INVALID_OPTIONS"),
             QStringLiteral(
-                "运动推荐选项不合法：项目数必须为 1～3，"
-                "时长和步长必须为正数，允许超出比例必须为 0～10%。"));
+                "运动推荐选项不合法：项目数必须为 1～3，时长和步长必须"
+                "为正数，允许超出比例必须为 0～10%，近期运动惩罚必须为"
+                "非负有限数。"));
     }
 
     const QVector<Exercise> eligibleExercises = filterEligibleExercises(
         user,
         exerciseDatabase,
         options);
-
     if (eligibleExercises.isEmpty()) {
         return ServiceResult<QVector<ExercisePlanItem>>::failure(
             QStringLiteral("NO_ELIGIBLE_EXERCISE"),
@@ -478,46 +443,19 @@ ServiceResult<QVector<ExercisePlanItem>> ExerciseRecommender::generate(
                 "过滤无效、重复、不喜欢及显式排除的运动后，没有可推荐项目。"));
     }
 
-    const std::optional<ExercisePlanItem> bestSingleExercise =
-        findBestSingleExercise(
-            user.weightKg,
-            targetCalories,
-            eligibleExercises,
-            options);
-
-    if (bestSingleExercise.has_value()) {
+    const auto bestPlan = findBestBoundedPlan(
+        user.weightKg,
+        targetCalories,
+        eligibleExercises,
+        options,
+        user.exerciseGoal);
+    if (bestPlan.has_value()) {
         return ServiceResult<QVector<ExercisePlanItem>>::success(
-            {*bestSingleExercise},
-            QStringLiteral("已生成满足目标热量范围的单项运动方案。"));
+            *bestPlan,
+            QStringLiteral(
+                "已通过有界搜索生成满足热量约束并匹配运动目标的方案。"));
     }
 
-    const std::optional<QVector<ExercisePlanItem>> bestTwoExercises =
-        findBestTwoExercises(
-            user.weightKg,
-            targetCalories,
-            eligibleExercises,
-            options);
-
-    if (bestTwoExercises.has_value()) {
-        return ServiceResult<QVector<ExercisePlanItem>>::success(
-            *bestTwoExercises,
-            QStringLiteral("已生成满足目标热量范围的两项运动组合。"));
-    }
-
-    const std::optional<QVector<ExercisePlanItem>> bestThreeExercises =
-        findBestThreeExercises(
-            user.weightKg,
-            targetCalories,
-            eligibleExercises,
-            options);
-
-    if (bestThreeExercises.has_value()) {
-        return ServiceResult<QVector<ExercisePlanItem>>::success(
-            *bestThreeExercises,
-            QStringLiteral("已生成满足目标热量范围的三项运动组合。"));
-    }
-
-    // 所有允许的 1～3 项组合均已搜索完毕，仍不存在合法解。
     return ServiceResult<QVector<ExercisePlanItem>>::failure(
         QStringLiteral("NO_FEASIBLE_EXERCISE_PLAN"),
         QStringLiteral(

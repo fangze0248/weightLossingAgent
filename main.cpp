@@ -1,13 +1,16 @@
 #include "mainwindow.h"
+#include "application/builtindatasetinitializer.h"
 #include "application/plangenerationservice.h"
 #include "application/csvdataexchangeservice.h"
 #include "database/databasemanager.h"
 #include "repositories/sqliteexerciserepository.h"
+#include "repositories/sqlitefeedbackrepository.h"
 #include "repositories/sqliteplanrepository.h"
 #include "repositories/sqlitereciperepository.h"
 #include "repositories/sqliteuserrepository.h"
 #include "recommendation/healthcalculator.h"
 #include "recommendation/WeeklyPlanner.h"
+#include "services/FeedbackService.h"
 #include "session/sessionmanager.h"
 #include "ui/appstyle.h"
 
@@ -27,8 +30,7 @@ int main(int argc, char *argv[])
     DatabaseManager databaseManager;
     QString databaseError;
     if (!databaseManager.open(&databaseError)
-        || !databaseManager.initialize(&databaseError)
-        || !databaseManager.seedDemoData(&databaseError)) {
+        || !databaseManager.initialize(&databaseError)) {
         QMessageBox::critical(
             nullptr,
             QStringLiteral("Database error"),
@@ -40,6 +42,37 @@ int main(int argc, char *argv[])
     SqliteRecipeRepository recipeRepository(databaseManager.database());
     SqlitePlanRepository planRepository(databaseManager.database());
     SqliteUserRepository userRepository(databaseManager.database());
+    SqliteFeedbackRepository feedbackRepository(databaseManager.database());
+    FeedbackService feedbackService(feedbackRepository);
+    CsvDataExchangeService dataExchangeService;
+    BuiltinDatasetInitializer datasetInitializer(
+        databaseManager.database(),
+        exerciseRepository,
+        recipeRepository,
+        dataExchangeService);
+    // 检测内置运动数据集是否发生变化，并返回同步结果。
+    const auto exerciseDatasetResult =
+        datasetInitializer.importExercisesIfChanged(
+            QStringLiteral("builtin_exercises"),
+            QStringLiteral(":/datasets/exercises.csv"));
+    if (!exerciseDatasetResult.ok) {
+        QMessageBox::critical(
+            nullptr,
+            QStringLiteral("Dataset error"),
+            exerciseDatasetResult.message);
+        return 1;
+    }
+    const auto recipeDatasetResult = datasetInitializer.importRecipesIfChanged(
+        QStringLiteral("builtin_recipes"),
+        QStringLiteral(":/datasets/recipes.csv"));
+    if (!recipeDatasetResult.ok) {
+        QMessageBox::critical(
+            nullptr,
+            QStringLiteral("Dataset error"),
+            recipeDatasetResult.message);
+        return 1;
+    }
+
     HealthCalculator healthCalculator;
     WeeklyPlanner weeklyPlanner;
     PlanGenerationService planGenerationService(userRepository,
@@ -47,8 +80,8 @@ int main(int argc, char *argv[])
                                                 recipeRepository,
                                                 planRepository,
                                                 healthCalculator,
-                                                weeklyPlanner);
-    CsvDataExchangeService dataExchangeService;
+                                                weeklyPlanner,
+                                                feedbackService);
     SessionManager sessionManager;
     MainWindow w(exerciseRepository,
                  recipeRepository,
@@ -57,6 +90,7 @@ int main(int argc, char *argv[])
                  dataExchangeService,
                  userRepository,
                  healthCalculator,
+                 feedbackService,
                  sessionManager);
     w.show();
     return QApplication::exec();

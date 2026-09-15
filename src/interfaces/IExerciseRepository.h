@@ -4,14 +4,18 @@
 #include "../models/Exercise.h"
 
 #include <QString>
+#include <QStringList>
 #include <QVector>
 #include <optional>
 
 struct ExerciseFilter {
     QString keyword;
+    QStringList excludedIds;
     std::optional<ExerciseCategory> category;
     std::optional<double> minimumMet;
     std::optional<double> maximumMet;
+    std::optional<double> targetMet;
+    int limit = 0;
 };
 
 class IExerciseRepository {

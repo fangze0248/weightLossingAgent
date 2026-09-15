@@ -95,7 +95,7 @@ ServiceResult<QVector<WeeklyPlan>> SqlitePlanRepository::findByUserId(
     QSqlQuery query(database_);
     query.prepare(QStringLiteral(
         "SELECT plan_json FROM weekly_plans WHERE user_id = :user_id "
-        "ORDER BY start_date DESC"));
+        "ORDER BY start_date DESC, generated_at DESC"));
     query.bindValue(QStringLiteral(":user_id"), userId);
     if (!query.exec()) {
         return ServiceResult<QVector<WeeklyPlan>>::failure(

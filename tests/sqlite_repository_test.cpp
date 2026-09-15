@@ -8,6 +8,7 @@
 #include <QCoreApplication>
 #include <QDate>
 #include <QDebug>
+#include <QSqlQuery>
 #include <QTemporaryDir>
 #include <cmath>
 #include <cstdio>
@@ -22,8 +23,38 @@ int main(int argc, char* argv[])
         temporaryDirectory.filePath(QStringLiteral("repository_test.db")));
     QString error;
     if (!manager.open(&error)) return 2;
+
+    // Simulate an older database. initialize() must add newly introduced user
+    // columns without requiring the user to edit the DB file.
+    QSqlQuery legacySchemaQuery(manager.database());
+    if (!legacySchemaQuery.exec(QStringLiteral(R"SQL(
+        CREATE TABLE users (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            gender TEXT NOT NULL CHECK(gender IN ('M', 'F')),
+            age INTEGER NOT NULL CHECK(age > 0),
+            height_cm REAL NOT NULL CHECK(height_cm > 0),
+            weight_kg REAL NOT NULL CHECK(weight_kg > 0),
+            target_weight_kg REAL NOT NULL CHECK(target_weight_kg > 0),
+            activity_level INTEGER NOT NULL
+            CHECK(activity_level BETWEEN 1 AND 5),
+            goal_type TEXT NOT NULL
+            CHECK(goal_type IN ('lose', 'maintain', 'gain')),
+            weekly_goal_kg REAL NOT NULL DEFAULT 0.5,
+            diet_contribution_ratio REAL NOT NULL DEFAULT 0.7,
+            disliked_exercise_ids_json TEXT NOT NULL DEFAULT '[]',
+            disliked_recipe_ids_json TEXT NOT NULL DEFAULT '[]'
+        )
+    )SQL"))) return 32;
     if (!manager.initialize(&error)) return 3;
     if (!manager.seedDemoData(&error)) return 4;
+
+    QSqlQuery versionQuery(manager.database());
+    if (!versionQuery.exec(QStringLiteral("PRAGMA user_version"))
+        || !versionQuery.next()
+        || versionQuery.value(0).toInt() != 6) {
+        return 26;
+    }
 
     SqliteUserRepository userRepository(manager.database());
     SqliteExerciseRepository exerciseRepository(manager.database());
@@ -32,7 +63,18 @@ int main(int argc, char* argv[])
     SqliteFeedbackRepository feedbackRepository(manager.database());
 
     const auto users = userRepository.findAll();
-    if (!users.ok || users.data.size() != 1) return 5;
+    if (!users.ok || users.data.size() != 1
+        || users.data.first().averageDailySteps != 4000
+        || users.data.first().includeSnack) return 5;
+
+    UserProfile updatedUser = users.data.first();
+    updatedUser.averageDailySteps = 8250;
+    updatedUser.includeSnack = true;
+    if (!userRepository.update(updatedUser).ok) return 30;
+    const auto reloadedUser = userRepository.findById(updatedUser.id);
+    if (!reloadedUser.ok || !reloadedUser.data.has_value()
+        || reloadedUser.data->averageDailySteps != 8250
+        || !reloadedUser.data->includeSnack) return 31;
 
     const auto seededExercises = exerciseRepository.findAll();
     if (!seededExercises.ok || seededExercises.data.size() != 3) return 6;
@@ -124,6 +166,91 @@ int main(int argc, char* argv[])
         return 24;
     }
 
+    Recipe macroBalancedRecipe;
+    macroBalancedRecipe.id = QStringLiteral("macro-balanced");
+    macroBalancedRecipe.name = QStringLiteral("Macro balanced");
+    macroBalancedRecipe.mealType = MealType::Snack;
+    macroBalancedRecipe.totalCalories = 777.0;
+    macroBalancedRecipe.nutritionPerServing.caloriesKcal = 777.0;
+    macroBalancedRecipe.nutritionPerServing.proteinG = 30.0;
+    macroBalancedRecipe.nutritionPerServing.carbohydrateG = 100.0;
+    macroBalancedRecipe.nutritionPerServing.fatG = 28.5;
+    macroBalancedRecipe.nutritionPerServing.fiberG = 5.0;
+
+    Recipe proteinHeavyRecipe = macroBalancedRecipe;
+    proteinHeavyRecipe.id = QStringLiteral("protein-heavy");
+    proteinHeavyRecipe.name = QStringLiteral("Protein heavy");
+    proteinHeavyRecipe.nutritionPerServing.proteinG = 60.0;
+    proteinHeavyRecipe.nutritionPerServing.carbohydrateG = 70.0;
+    // 即使不均衡方案的纤维更高，三大营养素偏差仍应优先。
+    proteinHeavyRecipe.nutritionPerServing.fiberG = 20.0;
+
+    if (!recipeRepository.add(macroBalancedRecipe).ok
+        || !recipeRepository.add(proteinHeavyRecipe).ok) {
+        return 30;
+    }
+
+    RecipeFilter macroTargetFilter;
+    macroTargetFilter.mealType = MealType::Snack;
+    macroTargetFilter.targetCalories = 777.0;
+    macroTargetFilter.targetProteinG = 30.0;
+    macroTargetFilter.targetCarbohydrateG = 100.0;
+    macroTargetFilter.targetFatG = 28.5;
+    macroTargetFilter.limit = 1;
+    const auto macroRankedRecipes =
+        recipeRepository.findAll(macroTargetFilter);
+    if (!macroRankedRecipes.ok
+        || macroRankedRecipes.data.size() != 1
+        || macroRankedRecipes.data.first().id
+            != macroBalancedRecipe.id) {
+        return 31;
+    }
+
+    RecipeFilter incompleteMacroTargetFilter;
+    incompleteMacroTargetFilter.targetCalories = 777.0;
+    incompleteMacroTargetFilter.targetProteinG = 30.0;
+    if (recipeRepository.findAll(incompleteMacroTargetFilter).ok) {
+        return 32;
+    }
+
+    if (!recipeRepository.remove(macroBalancedRecipe.id).data
+        || !recipeRepository.remove(proteinHeavyRecipe.id).data) {
+        return 33;
+    }
+
+    RecipeFilter candidateFilter;
+    candidateFilter.mealType = MealType::Lunch;
+    candidateFilter.minimumProteinG = 35.0;
+    candidateFilter.minimumFiberG = 5.0;
+    candidateFilter.maximumSodiumMg = 500.0;
+    candidateFilter.targetCalories = 500.0;
+    candidateFilter.limit = 1;
+    const auto candidateRecipes = recipeRepository.findAll(candidateFilter);
+    if (!candidateRecipes.ok
+        || candidateRecipes.data.size() != 1
+        || candidateRecipes.data.first().id != nutritionRecipe.id) {
+        return 27;
+    }
+
+    candidateFilter.excludedIds = {nutritionRecipe.id};
+    const auto excludedCandidateRecipes =
+        recipeRepository.findAll(candidateFilter);
+    if (!excludedCandidateRecipes.ok
+        || !excludedCandidateRecipes.data.isEmpty()) {
+        return 28;
+    }
+
+    ExerciseFilter exerciseCandidateFilter;
+    exerciseCandidateFilter.targetMet = 6.0;
+    exerciseCandidateFilter.limit = 1;
+    const auto exerciseCandidates =
+        exerciseRepository.findAll(exerciseCandidateFilter);
+    if (!exerciseCandidates.ok
+        || exerciseCandidates.data.size() != 1
+        || exerciseCandidates.data.first().id != QStringLiteral("EX002")) {
+        return 29;
+    }
+
     if (!recipeRepository.remove(nutritionRecipe.id).data) return 25;
 
     WeeklyPlan plan;
@@ -132,11 +259,23 @@ int main(int argc, char* argv[])
     plan.startDate = QDate(2026, 8, 26);
     plan.generatedAt = QDateTime::currentDateTimeUtc();
     plan.days.append(DailyPlan{plan.startDate});
+    plan.days.first().meals.totalNutrition.caloriesKcal = 510.0;
+    plan.days.first().meals.totalNutrition.proteinG = 35.5;
+    plan.days.first().meals.breakfast.append(MealPlanItem{});
+    plan.days.first().meals.breakfast.first().nutrition =
+        nutritionRecipe.nutritionPerServing;
     if (!planRepository.save(plan).ok) return 12;
 
     const auto loadedPlan = planRepository.findById(plan.planId);
     if (!loadedPlan.ok || !loadedPlan.data.has_value()
-        || loadedPlan.data->days.size() != 1) return 13;
+        || loadedPlan.data->days.size() != 1
+        || !almostEqual(
+            loadedPlan.data->days.first().meals.totalNutrition.proteinG,
+            35.5)
+        || !almostEqual(
+            loadedPlan.data->days.first().meals.breakfast.first()
+                .nutrition.proteinG,
+            40.0)) return 13;
 
     Feedback feedback;
     feedback.id = QStringLiteral("FB_TEST");
