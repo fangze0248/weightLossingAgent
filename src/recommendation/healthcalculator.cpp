@@ -7,7 +7,7 @@ namespace {
 
 constexpr double caloriesPerKilogram = 7700.0;
 
-double baselineActivityFactor(int averageDailySteps)
+double baselineActivityFactor(int averageDailySteps)//拆分运动系数为基础运动（如日常通勤）和额外运动，并将后者融入每日的运动规划内。前者通过步数量化。在BMI中综合考虑身高，体重，年龄以及性别
 {
     if (averageDailySteps < 5000) return 1.20;
     if (averageDailySteps < 7500) return 1.30;

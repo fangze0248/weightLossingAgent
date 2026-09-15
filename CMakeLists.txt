@@ -433,3 +433,28 @@ else()
         COMMAND $<TARGET_FILE:dataset_pipeline_test>
     )
 endif()
+
+# Standalone benchmark: intentionally not registered with CTest because its
+# wall-clock results are environment dependent. It uses temporary databases.
+add_executable(performance_benchmark
+    tests/performance_benchmark.cpp
+    src/application/plangenerationservice.cpp
+    src/services/FeedbackService.cpp
+)
+
+target_include_directories(performance_benchmark PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+
+target_compile_definitions(performance_benchmark PRIVATE
+    PERFORMANCE_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+)
+
+target_link_libraries(performance_benchmark PRIVATE
+    dataset_core
+    persistence_core
+    recommendation_core
+    Qt${QT_VERSION_MAJOR}::Core
+    Qt${QT_VERSION_MAJOR}::Sql
+)
